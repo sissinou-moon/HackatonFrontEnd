@@ -9,10 +9,22 @@ export interface PinnedAnswer {
     pinnedAt: string;
 }
 
+export interface AIAnswerSource {
+    fileName: string;
+    lineNumber: number;
+    text: string;
+    score: number;
+}
+
+export interface AIAnswer {
+    content: string;
+    sources: AIAnswerSource[];
+}
+
 export interface Room {
     id: string;
     title: string;
-    aiAnswers: string[];
+    aiAnswers: AIAnswer[];
     userAnswers: string[];
     pinAnswer: PinnedAnswer[] | null;
     created_at: string;
@@ -106,7 +118,7 @@ export function useRooms() {
     const createRoom = useCallback(async (
         title: string,
         userAnswers: string[],
-        aiAnswers: string[]
+        aiAnswers: AIAnswer[]
     ): Promise<Room | null> => {
         try {
             const response = await fetch(`${API_BASE}/room`, {
@@ -139,7 +151,7 @@ export function useRooms() {
         updates: {
             title?: string;
             userAnswers?: string[];
-            aiAnswers?: string[];
+            aiAnswers?: AIAnswer[];
         }
     ): Promise<Room | null> => {
         try {

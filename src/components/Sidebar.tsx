@@ -201,10 +201,6 @@ export function Sidebar({
                     {/* Footer Area */}
                     <div className="p-4 border-t border-gray-100 space-y-1">
                         <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
-                            <Settings className="w-4 h-4" />
-                            <span>Settings</span>
-                        </button>
-                        <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
                             <LogOut className="w-4 h-4" />
                             <span>Log out</span>
                         </button>

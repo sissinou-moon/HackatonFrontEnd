@@ -1,15 +1,16 @@
 "use client";
 
 import React, { useState, useRef, useEffect, JSX } from "react";
-import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus } from "lucide-react";
+import { Send, Menu, Bookmark, User, Copy, Check, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Room, PinnedAnswer } from "@/hooks/useRooms";
+import { Room, PinnedAnswer, AIAnswer, AIAnswerSource } from "@/hooks/useRooms";
 import { ChatMessage } from "./ChatMessage";
 
 interface Message {
     id: string;
     role: "user" | "ai";
     content: string;
+    sources?: AIAnswerSource[];
     timestamp: Date;
 }
 
@@ -17,14 +18,20 @@ interface ChatSectionProps {
     onToggleSidebar: () => void;
     currentRoom: Room | null;
     isLoadingRoom: boolean;
-    onSaveConversation: (title: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
-    onUpdateConversation: (roomId: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
+    onSaveConversation: (title: string, userAnswers: string[], aiAnswers: AIAnswer[]) => Promise<Room | null>;
+    onUpdateConversation: (roomId: string, userAnswers: string[], aiAnswers: AIAnswer[]) => Promise<Room | null>;
 }
 
 interface FilePreview {
     fileName: string;
     fileUrl: string;
     fileType: 'pdf' | 'docx' | 'other';
+}
+
+interface CopyButtonProps {
+    content: string; // The content to copy
+    className?: string;
+    size?: number;
 }
 
 export function ChatSection({
@@ -77,7 +84,8 @@ export function ChatSection({
                     loadedMessages.push({
                         id: `ai-${i}`,
                         role: "ai",
-                        content: aiAnswers[i],
+                        content: aiAnswers[i].content,
+                        sources: aiAnswers[i].sources,
                         timestamp: new Date(currentRoom.created_at),
                     });
                 }
@@ -250,6 +258,53 @@ export function ChatSection({
         }
     };
 
+    const CopyButton: React.FC<CopyButtonProps> = ({
+        content,
+        className = "p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors",
+        size = 3.5
+    }) => {
+        const [copied, setCopied] = useState(false);
+
+        const handleCopy = async () => {
+            try {
+                await navigator.clipboard.writeText(content);
+                setCopied(true);
+
+                // Reset to copy icon after 3 seconds
+                setTimeout(() => {
+                    setCopied(false);
+                }, 3000);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = content;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+
+                setCopied(true);
+                setTimeout(() => setCopied(false), 3000);
+            }
+        };
+
+        return (
+            <button
+                onClick={handleCopy}
+                className={className}
+                title="Copy to clipboard"
+                disabled={copied}
+            >
+                {copied ? (
+                    <Check className={`w-${size} h-${size} text-green-500`} />
+                ) : (
+                    <Copy className={`w-${size} h-${size}`} />
+                )}
+            </button>
+        );
+    };
+
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!inputValue.trim()) return;
@@ -299,6 +354,7 @@ export function ChatSection({
             const decoder = new TextDecoder();
             let done = false;
             let fullAiText = '';
+            let sources: AIAnswerSource[] = [];
             let buffer = '';
 
             while (!done) {
@@ -323,6 +379,10 @@ export function ChatSection({
                                     if (parsedData.choices && parsedData.choices[0]?.delta?.content) {
                                         fullAiText += parsedData.choices[0].delta.content;
                                     }
+                                    // Extract sources from the response
+                                    if (parsedData.sources && Array.isArray(parsedData.sources) && sources.length === 0) {
+                                        sources = parsedData.sources;
+                                    }
                                 } catch (e) {
                                     console.warn("Error parsing JSON data line:", e);
                                 }
@@ -340,7 +400,7 @@ export function ChatSection({
             setStreamingMessageId(null);
 
             setMessages(prev => prev.map(msg =>
-                msg.id === aiId ? { ...msg, content: fullAiText } : msg
+                msg.id === aiId ? { ...msg, content: fullAiText, sources } : msg
             ));
 
             if (roomIdRef.current) {
@@ -351,7 +411,7 @@ export function ChatSection({
                     await onUpdateConversation(
                         roomIdRef.current,
                         [...currentUserAnswers, userMessageText],
-                        [...currentAiAnswers, fullAiText]
+                        [...currentAiAnswers, { content: fullAiText, sources }]
                     );
                 } finally {
                     setPendingSave(false);
@@ -362,7 +422,7 @@ export function ChatSection({
                     const newRoom = await onSaveConversation(
                         userMessageText.slice(0, 30) + "...",
                         [userMessageText],
-                        [fullAiText]
+                        [{ content: fullAiText, sources }]
                     );
                     if (newRoom) {
                         roomIdRef.current = newRoom.id;
@@ -576,6 +636,7 @@ export function ChatSection({
                                     <ChatMessage
                                         content={streamingMessageId === msg.id ? currText : msg.content}
                                         role={msg.role}
+                                        sources={msg.sources}
                                         onOpenFile={openFile}
                                     />
                                 </div>
@@ -587,7 +648,7 @@ export function ChatSection({
                                                 e.stopPropagation();
                                                 saveAsNote(msg);
                                             }}
-                                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-colors border ${pinnedAnswers.some(p => p.messageId === msg.id)
+                                            className={`flex items-center px-3 py-1.5 text-xs font-medium rounded-full transition-colors border ${pinnedAnswers.some(p => p.messageId === msg.id)
                                                 ? "border-blue-400 text-blue-600 bg-blue-50"
                                                 : "text-gray-500 hover:text-blue-600 hover:bg-blue-50 border-transparent hover:border-blue-100"
                                                 }`}
@@ -595,17 +656,11 @@ export function ChatSection({
                                             <Bookmark className="w-3.5 h-3.5" />
                                             {pinnedAnswers.some(p => p.messageId === msg.id) ? "Remove from note" : "Save as note"}
                                         </button>
-                                        <div className="flex items-center gap-1 ml-2">
-                                            <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
-                                                <Copy className="w-3.5 h-3.5" />
-                                            </button>
-                                            <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
-                                                <ThumbsUp className="w-3.5 h-3.5" />
-                                            </button>
-                                            <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
-                                                <ThumbsDown className="w-3.5 h-3.5" />
-                                            </button>
-                                        </div>
+                                        <CopyButton
+                                            content="Text to copy here"
+                                            className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                                            size={3.5}
+                                        />
                                     </div>
                                 )}
                             </div>

@@ -4,7 +4,7 @@ import React, { useState, useCallback } from "react";
 import { ChatSection } from "@/components/ChatSection";
 import { FilePanel } from "@/components/FilePanel";
 import { Sidebar } from "@/components/Sidebar";
-import { useRooms, Room } from "@/hooks/useRooms";
+import { useRooms, Room, AIAnswer } from "@/hooks/useRooms";
 
 export default function Home() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -57,7 +57,7 @@ export default function Home() {
   const handleSaveConversation = useCallback(async (
     title: string,
     userAnswers: string[],
-    aiAnswers: string[]
+    aiAnswers: AIAnswer[]
   ): Promise<Room | null> => {
     const room = await createRoom(title, userAnswers, aiAnswers);
     if (room) {
@@ -70,7 +70,7 @@ export default function Home() {
   const handleUpdateConversation = useCallback(async (
     roomId: string,
     userAnswers: string[],
-    aiAnswers: string[]
+    aiAnswers: AIAnswer[]
   ): Promise<Room | null> => {
     return await updateRoom(roomId, { userAnswers, aiAnswers });
   }, [updateRoom]);
