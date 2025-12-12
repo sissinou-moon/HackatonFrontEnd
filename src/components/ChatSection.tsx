@@ -62,7 +62,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 },
                 body: JSON.stringify({
                     question: userMessageText,
-                    topK: 7,
+                    topK: 3,
                 }),
             });
 
@@ -115,107 +115,151 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         }
     }
 
-    // Helper component to render content with interactive citations
+    // Helper component to render content with interactive citations and tables
     const MessageContent = ({ content }: { content: string }) => {
-        // First, replace backticks with nothing
+        // 1. Initial cleanup
         let processedContent = content.replace(/`/g, '');
+        processedContent = processedContent.replace(/^\s*\*\s+/gm, '➜ ');
 
-        // Replace bullet points * with ╰┈➤
-        processedContent = processedContent.replace(/^\s*\*\s+/gm, '➜');
+        // 2. Rich Text Renderer
+        const renderRichText = (text: string) => {
+            const elements: (string | JSX.Element)[] = [];
+            let elementKey = 0;
 
-        const elements: (string | JSX.Element)[] = [];
-        let elementKey = 0;
+            const allCitationsRegex = /(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["""']([^"""']+)["""'],?\s*à la ligne\s*\d+)|(\*\s*--\s*([^-]+)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*line\s*(\d+)\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)/gi;
 
-        // Combined regex for all citation formats:
-        // 1. *(Source: FileName, line N)*
-        // 2. * -- FileName-- ... السطر N
-        // 3. [From FileName, line N]
-        // 4. FileName, line N (no backticks since we removed them)
-        // 5. Selon le document "FileName" à la ligne N
-        const allCitationsRegex = /(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|(\*\s*--\s*([^-]+)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*line\s*(\d+)\])|(\b([^,\n]+\.docx?),\s*line\s*\d+)|([Ss]elon le document\s*["""']([^"""']+)["""']\s*à la ligne\s*\d+)/gi;
+            let lastIndex = 0;
+            let match;
 
-        let lastIndex = 0;
-        let match;
+            while ((match = allCitationsRegex.exec(text)) !== null) {
+                if (match.index > lastIndex) {
+                    elements.push(text.slice(lastIndex, match.index));
+                }
 
-        while ((match = allCitationsRegex.exec(processedContent)) !== null) {
-            if (match.index > lastIndex) {
-                const textBefore = processedContent.slice(lastIndex, match.index);
-                elements.push(textBefore);
-            }
+                let fileName = '';
+                if (match[2]) fileName = match[2].trim();
+                else if (match[4]) fileName = match[4].trim();
+                else if (match[6]) fileName = match[6].trim();
+                else if (match[8]) fileName = match[8].trim();
+                else if (match[11]) fileName = match[11].trim();
+                else if (match[13]) fileName = match[13].trim();
 
-            let fileName = '';
-            if (match[2]) {
-                // *(Source: FileName, ...)* pattern
-                fileName = match[2].trim();
-            } else if (match[4]) {
-                // * -- FileName-- ... pattern
-                fileName = match[4].trim();
-            } else if (match[7]) {
-                // [From/File: FileName, ...] pattern
-                fileName = match[7].trim();
-            } else if (match[9]) {
-                // FileName.docx, line N pattern (no backticks)
-                fileName = match[9].trim();
-            } else if (match[11]) {
-                // Selon le document "FileName" pattern
-                fileName = match[11].trim();
-            }
-
-            if (fileName) {
-                elements.push(
-                    <button
-                        key={`citation-${elementKey++}`}
-                        onClick={() => openFile(fileName)}
-                        className="inline mx-1 font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
-                        title={`Open ${fileName}`}
-                    >
-                        {fileName}
-                    </button>
-                );
-            }
-
-            lastIndex = allCitationsRegex.lastIndex;
-        }
-
-        if (lastIndex < processedContent.length) {
-            elements.push(processedContent.slice(lastIndex));
-        }
-
-        const finalElements: (string | JSX.Element)[] = [];
-
-        elements.forEach((element, idx) => {
-            if (typeof element === 'string') {
-                // Process bold markdown **text**
-                const boldRegex = /\*\*([^\*]+)\*\*/g;
-                const parts: (string | JSX.Element)[] = [];
-                let lastBoldIndex = 0;
-                let boldMatch;
-
-                while ((boldMatch = boldRegex.exec(element)) !== null) {
-                    if (boldMatch.index > lastBoldIndex) {
-                        parts.push(element.slice(lastBoldIndex, boldMatch.index));
-                    }
-
-                    parts.push(
-                        <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
-                            {boldMatch[1]}
-                        </strong>
+                if (fileName) {
+                    elements.push(
+                        <button
+                            key={`citation-${elementKey++}`}
+                            onClick={() => openFile(fileName)}
+                            className="inline mx-1 font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
+                            title={`Open ${fileName}`}
+                        >
+                            {fileName}
+                        </button>
                     );
-
-                    lastBoldIndex = boldRegex.lastIndex;
                 }
-
-                if (lastBoldIndex < element.length) {
-                    parts.push(element.slice(lastBoldIndex));
-                }
-
-                finalElements.push(...parts);
-            } else {
-                finalElements.push(element);
+                lastIndex = allCitationsRegex.lastIndex;
             }
-        });
 
-        return <div className="whitespace-pre-wrap leading-7">{finalElements}</div>;
+            if (lastIndex < text.length) {
+                elements.push(text.slice(lastIndex));
+            }
+
+            const finalElements: (string | JSX.Element)[] = [];
+            elements.forEach((element, idx) => {
+                if (typeof element === 'string') {
+                    const boldRegex = /\*\*([^\*]+)\*\*/g;
+                    let lastBoldIndex = 0;
+                    let boldMatch;
+
+                    while ((boldMatch = boldRegex.exec(element)) !== null) {
+                        if (boldMatch.index > lastBoldIndex) {
+                            finalElements.push(element.slice(lastBoldIndex, boldMatch.index));
+                        }
+                        finalElements.push(
+                            <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
+                                {boldMatch[1]}
+                            </strong>
+                        );
+                        lastBoldIndex = boldRegex.lastIndex;
+                    }
+                    if (lastBoldIndex < element.length) {
+                        finalElements.push(element.slice(lastBoldIndex));
+                    }
+                } else {
+                    finalElements.push(element);
+                }
+            });
+
+            return finalElements;
+        };
+
+        // 3. Block Parser for Tables
+        const lines = processedContent.split('\n');
+        const blocks: { type: 'text' | 'table', content: string[] }[] = [];
+        let currentBlock: { type: 'text' | 'table', content: string[] } = { type: 'text', content: [] };
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const isTableLine = line.trim().startsWith('|');
+
+            if (isTableLine) {
+                if (currentBlock.type !== 'table') {
+                    if (currentBlock.content.length > 0) blocks.push(currentBlock);
+                    currentBlock = { type: 'table', content: [] };
+                }
+                currentBlock.content.push(line);
+            } else {
+                if (currentBlock.type === 'table') {
+                    blocks.push(currentBlock);
+                    currentBlock = { type: 'text', content: [] };
+                }
+                currentBlock.content.push(line);
+            }
+        }
+        if (currentBlock.content.length > 0) blocks.push(currentBlock);
+
+        return (
+            <div className="space-y-4">
+                {blocks.map((block, index) => {
+                    if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('---')) {
+                        const parseRow = (row: string) => row.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+
+                        const headers = parseRow(block.content[0]);
+                        const rows = block.content.slice(2).map(parseRow);
+
+                        return (
+                            <div key={index} className="overflow-x-auto my-4 rounded-lg border border-gray-200 shadow-sm">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            {headers.map((h, i) => (
+                                                <th key={i} className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">
+                                                    {renderRichText(h)}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200 text-sm text-gray-700">
+                                        {rows.map((row, rI) => (
+                                            <tr key={rI} className={rI % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                                {row.map((cell, cI) => (
+                                                    <td key={cI} className="px-4 py-3 whitespace-pre-wrap leading-relaxed">
+                                                        {renderRichText(cell)}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    } else {
+                        const text = block.content.join('\n').trim();
+                        if (!text) return null;
+                        return <div key={index} className="whitespace-pre-wrap leading-7">{renderRichText(text)}</div>
+                    }
+                })}
+            </div>
+        );
     };
 
     return (
