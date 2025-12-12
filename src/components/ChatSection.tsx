@@ -21,7 +21,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             id: "1",
             role: "ai",
             content:
-                "Hello! I am your advanced AI assistant. I have reviewed the uploaded documents and I am ready to help you analyze, summarize, or extract insights from them.\n\nHow can I assist you today?",
+                "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
             timestamp: new Date(),
         },
     ]);
@@ -90,7 +90,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 id: (Date.now() + 1).toString(),
                 role: "ai",
                 content:
-                    "I apologize, but I encountered an error while processing your request. Please try again.",
+                    "désolé j'ai eu un petit probéme , pouvez veus ressayer plutard ?",
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorResponse]);
