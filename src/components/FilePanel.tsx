@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 interface FileItem {
     id: string;
     name: string;
+    displayName: string; // Clean name for display
     type: string;
     size: string;
     date: string;
@@ -24,6 +25,13 @@ export function FilePanel() {
         fetchFiles();
     }, []);
 
+    // Helper function to clean file names
+    const cleanFileName = (fileName: string): string => {
+        // Remove timestamp pattern at the beginning (e.g., "1765474707819-")
+        const cleaned = fileName.replace(/^\d+-\s*/, '');
+        return cleaned;
+    };
+
     const fetchFiles = async () => {
         try {
             setLoading(true);
@@ -36,7 +44,8 @@ export function FilePanel() {
             if (data) {
                 const mappedFiles: FileItem[] = data.map((file) => ({
                     id: file.id,
-                    name: file.name,
+                    name: file.name, // Keep original name for API calls
+                    displayName: cleanFileName(file.name), // Clean name for display
                     type: file.name.split(".").pop()?.toUpperCase() || "FILE",
                     size: (file.metadata?.size / 1024 / 1024).toFixed(2) + " MB",
                     date: new Date(file.created_at).toLocaleDateString(),
@@ -107,6 +116,7 @@ export function FilePanel() {
                         className="hidden"
                         onChange={handleFileUpload}
                         disabled={uploading}
+                        accept=".pdf,.doc,.docx"
                     />
 
                     <button
@@ -163,7 +173,7 @@ export function FilePanel() {
                                     </div>
                                     <div className="min-w-0">
                                         <h3 className="font-medium text-gray-800 text-sm truncate group-hover:text-primary transition-colors">
-                                            {file.name}
+                                            {file.displayName}
                                         </h3>
                                         <div className="flex items-center gap-2 mt-0.5">
                                             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
