@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, JSX } from "react";
 import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { Room } from "@/hooks/useRooms";
 
 interface Message {
     id: string;
@@ -13,6 +14,10 @@ interface Message {
 
 interface ChatSectionProps {
     onToggleSidebar: () => void;
+    currentRoom: Room | null;
+    isLoadingRoom: boolean;
+    onSaveConversation: (title: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
+    onUpdateConversation: (roomId: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
 }
 
 interface FilePreview {
@@ -21,21 +26,73 @@ interface FilePreview {
     fileType: 'pdf' | 'docx' | 'other';
 }
 
-export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
+export function ChatSection({
+    onToggleSidebar,
+    currentRoom,
+    isLoadingRoom,
+    onSaveConversation,
+    onUpdateConversation
+}: ChatSectionProps) {
     const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
     const [isLoadingFile, setIsLoadingFile] = useState(false);
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: "1",
-            role: "ai",
-            content:
-                "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
-            timestamp: new Date(),
-        },
-    ]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
+    const [pendingSave, setPendingSave] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const roomIdRef = useRef<string | null>(null);
+
+    // Initialize or reset messages based on current room
+    useEffect(() => {
+        if (currentRoom) {
+            // Load messages from room
+            const loadedMessages: Message[] = [];
+            const userAnswers = currentRoom.userAnswers || [];
+            const aiAnswers = currentRoom.aiAnswers || [];
+
+            // Add welcome message first
+            loadedMessages.push({
+                id: "welcome",
+                role: "ai",
+                content: "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
+                timestamp: new Date(currentRoom.created_at),
+            });
+
+            // Interleave user and AI messages
+            for (let i = 0; i < Math.max(userAnswers.length, aiAnswers.length); i++) {
+                if (userAnswers[i]) {
+                    loadedMessages.push({
+                        id: `user-${i}`,
+                        role: "user",
+                        content: userAnswers[i],
+                        timestamp: new Date(currentRoom.created_at),
+                    });
+                }
+                if (aiAnswers[i]) {
+                    loadedMessages.push({
+                        id: `ai-${i}`,
+                        role: "ai",
+                        content: aiAnswers[i],
+                        timestamp: new Date(currentRoom.created_at),
+                    });
+                }
+            }
+
+            setMessages(loadedMessages);
+            roomIdRef.current = currentRoom.id;
+        } else {
+            // New chat - reset to welcome message only
+            setMessages([
+                {
+                    id: "1",
+                    role: "ai",
+                    content: "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
+                    timestamp: new Date(),
+                },
+            ]);
+            roomIdRef.current = null;
+        }
+    }, [currentRoom]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -72,7 +129,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 },
                 body: JSON.stringify({
                     question: userMessageText,
-                    topK: 3,
+                    topK: 10,
                 }),
             });
 
@@ -94,6 +151,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             const decoder = new TextDecoder();
             let done = false;
             let buffer = '';
+            let fullAiResponse = '';
 
             while (!done) {
                 const { value, done: readerDone } = await reader.read();
@@ -109,32 +167,41 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 buffer = parts.pop() || '';
 
                 for (const part of parts) {
-                    const lines = part.split('\n').map(l => l.trim());
+                    // Don't trim the lines - preserve whitespace in content!
+                    const lines = part.split('\n');
                     if (lines.length === 0) continue;
 
                     // detect event header
                     let eventType = 'message';
                     let dataLines: string[] = [];
                     for (const line of lines) {
-                        if (line.startsWith('event:')) {
-                            eventType = line.replace('event:', '').trim();
-                        } else if (line.startsWith('data:')) {
-                            dataLines.push(line.replace('data:', '').trim());
+                        // Only trim for checking prefixes, not the content itself
+                        const trimmedLine = line.trim();
+                        if (trimmedLine.startsWith('event:')) {
+                            eventType = trimmedLine.replace('event:', '').trim();
+                        } else if (trimmedLine.startsWith('data:')) {
+                            // Preserve the data content exactly - don't trim!
+                            // Remove only the "data:" prefix, keep all spacing
+                            const dataContent = line.replace(/^\s*data:/, '');
+                            dataLines.push(dataContent);
                         }
                     }
 
+                    // Join data lines preserving newlines
                     const data = dataLines.join('\n');
 
-                    if (eventType === 'message' || eventType === 'message' /* fallback */) {
-                        // append partial text
+                    if (eventType === 'message') {
+                        // append partial text - data already has proper spacing
+                        fullAiResponse += data;
                         setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
                     } else if (eventType === 'done') {
                         // final metadata event (sources) — can be parsed and appended if desired
                         try {
-                            const json = JSON.parse(data);
+                            const json = JSON.parse(data.trim());
                             // Optionally append source info to last message
                             if (json?.sources && Array.isArray(json.sources)) {
                                 const sourcesText = '\n\nSources:\n' + json.sources.map((s: any) => `- ${s.fileName} (line ${s.lineNumber})`).join('\n');
+                                fullAiResponse += sourcesText;
                                 setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + sourcesText } : m));
                             }
                         } catch (e) {
@@ -148,12 +215,56 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
 
             // flush any remaining buffer
             if (buffer) {
-                const lines = buffer.split('\n').map(l => l.trim());
-                const dataLines = lines.filter(l => l.startsWith('data:')).map(l => l.replace('data:', '').trim());
+                const lines = buffer.split('\n');
+                const dataLines = lines
+                    .filter(l => l.trim().startsWith('data:'))
+                    .map(l => l.replace(/^\s*data:/, '')); // Don't trim content!
                 if (dataLines.length) {
                     const data = dataLines.join('\n');
+                    fullAiResponse += data;
                     setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
                 }
+            }
+
+            // ===== SAVE CONVERSATION AFTER AI RESPONSE COMPLETES =====
+            setIsTyping(false);
+            setPendingSave(true);
+
+            // Get current conversation history
+            const currentMessages = await new Promise<Message[]>((resolve) => {
+                setMessages(prev => {
+                    resolve(prev);
+                    return prev;
+                });
+            });
+
+            // Extract user and AI answers (excluding welcome message)
+            const userAnswers = currentMessages
+                .filter(m => m.role === 'user')
+                .map(m => m.content);
+
+            const aiAnswers = currentMessages
+                .filter(m => m.role === 'ai' && m.id !== 'welcome' && m.id !== '1')
+                .map(m => m.content);
+
+            // Generate title from first user message
+            const title = userAnswers[0]?.slice(0, 50) || 'New Conversation';
+
+            try {
+                if (roomIdRef.current) {
+                    // Update existing room
+                    await onUpdateConversation(roomIdRef.current, userAnswers, aiAnswers);
+                } else {
+                    // Create new room
+                    const newRoom = await onSaveConversation(title, userAnswers, aiAnswers);
+                    if (newRoom) {
+                        roomIdRef.current = newRoom.id;
+                    }
+                }
+            } catch (saveError) {
+                console.error("Failed to save conversation:", saveError);
+            } finally {
+                setPendingSave(false);
             }
 
         } catch (error) {
@@ -166,7 +277,6 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorResponse]);
-        } finally {
             setIsTyping(false);
         }
     };
@@ -332,38 +442,46 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
 
     // Helper component to render content with interactive citations and tables
     const MessageContent = ({ content }: { content: string }) => {
-        // 1. Initial cleanup
+        // ============================================================================
+        // 1. CONTENT NORMALIZATION
+        // ============================================================================
         const processedContent = content
-            .replace(/`/g, '')
-            .replace(/^\s*\*\s+/gm, '╰┈➤ ');
+            .replace(/\r\n/g, '\n')                       // Normalize Windows line breaks
+            .replace(/\n{3,}/g, '\n\n')                   // Prevent excessive blank spaces
+            .replace(/[ \t]+$/gm, '')                     // Trim trailing spaces per line
+            .replace(/\s*\*\s+(?=[A-Za-z0-9])/g, '\n* ')  // Ensure bullets start on new line
+            .replace(/^\s*\*\s+/gm, '• ')                 // Convert "* " to "• " at line start
+            .replace(/(?<!\n)•\s+/g, '\n• ')              // Force bullets to always start new line
+            .replace(/(?<!•)\*(?!\s|$)/g, '');            // Remove stray "*" not used as bullets
 
-        // 2. Rich Text Renderer with memoized regex
+        // ============================================================================
+        // 2. RICH TEXT RENDERER (Citations, Bold, Highlight)
+        // ============================================================================
         const renderRichText = React.useMemo(() => {
             return (text: string) => {
                 const elements: (string | JSX.Element)[] = [];
                 let elementKey = 0;
 
-                // Comprehensive citation regex - covers all formats including standalone quoted files, 'From file:', and 'From [filename]' patterns
-                const citationRegex = /(\[Source:\s*([^,\]]+),\s*lines?\s*\d+\])|(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["""']([^"""']+)["""'],?\s*à la ligne\s*\d+)|(le fichier\s+--?\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--?\s*à la ligne\s*\d+)|(Source\s*:\s*(?:--\s*)?(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*(?:,|--)?\s*lignes?\s*\d+)|(\*\s*--\s*(.+?)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*lines?\s*\d+\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|("([^"]+\.(?:docx?|pdf|xlsx?|pptx?|txt))")|(From file:\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(From\s+(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))/gi;
+                // Citation regex - matches multiple file reference formats
+                const citationRegex = /(\[Source:\s*([^,\]]+),\s*lines?\s*\d+\])|(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["']([^"']+)["'],?\s*à la ligne\s*\d+)|(le fichier\s+--?\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--?\s*à la ligne\s*\d+)|(Source\s*:\s*(?:--\s*)?(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*(?:,|--)??\s*lignes?\s*\d+)|(\*\s*--\s*(.+?)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*lines?\s*\d+\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|("([^"]+\.(?:docx?|pdf|xlsx?|pptx?|txt))")|(From file:\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(From\s+(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(--\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--)/gi;
 
                 let lastIndex = 0;
                 let match;
 
+                // Extract citations and replace with clickable buttons
                 while ((match = citationRegex.exec(text)) !== null) {
                     if (match.index > lastIndex) {
                         elements.push(text.slice(lastIndex, match.index));
                     }
 
-                    // Extract filename from matched groups
+                    // Extract filename from any matched group
                     let fileName = (
                         match[2] || match[4] || match[6] || match[8] ||
-                        match[10] || match[12] || match[14] || match[17] || match[19] || match[21] || match[23] || match[25]
-                    )?.trim();
+                        match[10] || match[12] || match[14] || match[17] ||
+                        match[19] || match[21] || match[23] || match[25] || match[27]
+                    )?.trim().replace(/^["']|["']$/g, '');
 
-                    // Remove quotes if present
                     if (fileName) {
-                        fileName = fileName.replace(/^["']|["']$/g, '');
-
                         elements.push(
                             <button
                                 key={`cite-${elementKey++}`}
@@ -375,6 +493,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                             </button>
                         );
                     }
+
                     lastIndex = citationRegex.lastIndex;
                 }
 
@@ -382,28 +501,44 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                     elements.push(text.slice(lastIndex));
                 }
 
-                // Process bold text
+                // Process bold (**text**) and highlighted ("text") text
                 const finalElements: (string | JSX.Element)[] = [];
-                const boldRegex = /\*\*([^\*]+)\*\*/g;
+                const formattingRegex = /\*\*([^\*]+)\*\*|"([^"]+)"/g;
 
                 elements.forEach((element, idx) => {
                     if (typeof element === 'string') {
-                        let lastBoldIndex = 0;
-                        let boldMatch;
+                        let lastIndex = 0;
+                        let fmtMatch;
 
-                        while ((boldMatch = boldRegex.exec(element)) !== null) {
-                            if (boldMatch.index > lastBoldIndex) {
-                                finalElements.push(element.slice(lastBoldIndex, boldMatch.index));
+                        while ((fmtMatch = formattingRegex.exec(element)) !== null) {
+                            if (fmtMatch.index > lastIndex) {
+                                finalElements.push(element.slice(lastIndex, fmtMatch.index));
                             }
-                            finalElements.push(
-                                <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
-                                    {boldMatch[1]}
-                                </strong>
-                            );
-                            lastBoldIndex = boldRegex.lastIndex;
+
+                            if (fmtMatch[1]) {
+                                // Bold text
+                                finalElements.push(
+                                    <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
+                                        {fmtMatch[1]}
+                                    </strong>
+                                );
+                            } else if (fmtMatch[2]) {
+                                // Highlighted text
+                                finalElements.push(
+                                    <span
+                                        key={`highlight-${idx}-${elementKey++}`}
+                                        className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-sm font-medium"
+                                    >
+                                        {fmtMatch[2]}
+                                    </span>
+                                );
+                            }
+
+                            lastIndex = formattingRegex.lastIndex;
                         }
-                        if (lastBoldIndex < element.length) {
-                            finalElements.push(element.slice(lastBoldIndex));
+
+                        if (lastIndex < element.length) {
+                            finalElements.push(element.slice(lastIndex));
                         }
                     } else {
                         finalElements.push(element);
@@ -414,10 +549,15 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             };
         }, []);
 
-        // 3. Block Parser for Tables
+        // ============================================================================
+        // 3. BLOCK STRUCTURE DETECTION (Tables vs Text)
+        // ============================================================================
         const lines = processedContent.split('\n');
         const blocks: { type: 'text' | 'table', content: string[] }[] = [];
-        let currentBlock: { type: 'text' | 'table', content: string[] } = { type: 'text', content: [] };
+        let currentBlock: { type: 'text' | 'table', content: string[] } = {
+            type: 'text',
+            content: []
+        };
 
         for (const line of lines) {
             const isTableLine = line.trim().startsWith('|');
@@ -436,12 +576,19 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 currentBlock.content.push(line);
             }
         }
-        if (currentBlock.content.length > 0) blocks.push(currentBlock);
 
-        // 4. Render blocks
+        if (currentBlock.content.length > 0) {
+            blocks.push(currentBlock);
+        }
+
+        // ============================================================================
+        // 4. RENDER BLOCKS
+        // ============================================================================
         return (
             <div className="space-y-4">
                 {blocks.map((block, index) => {
+
+                    // TABLE BLOCK RENDERING
                     if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('-')) {
                         const parseRow = (row: string) =>
                             row.split('|')
@@ -457,7 +604,10 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                                     <thead className="bg-gray-50">
                                         <tr>
                                             {headers.map((h, i) => (
-                                                <th key={i} className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">
+                                                <th
+                                                    key={i}
+                                                    className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+                                                >
                                                     {renderRichText(h)}
                                                 </th>
                                             ))}
@@ -477,22 +627,99 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                                 </table>
                             </div>
                         );
-                    } else {
-                        const text = block.content.join('\n').trim();
-                        if (!text) return null;
-                        return (
-                            <div key={index} className="whitespace-pre-wrap leading-7">
-                                {renderRichText(text)}
-                            </div>
-                        );
                     }
+
+                    // TEXT BLOCK RENDERING
+                    const textLines = block.content;
+
+                    return (
+                        <div key={index}>
+                            {textLines.map((line, lineIdx) => {
+                                const trimmedLine = line.trim();
+
+                                // Empty line = spacing
+                                if (!trimmedLine) {
+                                    return <div key={lineIdx} className="h-3" />;
+                                }
+
+                                // Check if bullet point
+                                const isBullet = trimmedLine.startsWith('•');
+
+                                return (
+                                    <div
+                                        key={lineIdx}
+                                        className={`leading-7 ${isBullet ? 'pl-4' : ''}`}
+                                    >
+                                        {renderRichText(trimmedLine)}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    );
                 })}
             </div>
         );
     };
 
+    const handlePrintMessage = (message: Message) => {
+        if (message.role !== 'ai') return;
+
+        console.clear();
+        console.log('═'.repeat(80));
+        console.log('🤖 AI MESSAGE - ORIGINAL RESPONSE');
+        console.log('═'.repeat(80));
+        console.log('');
+        console.log('📋 Message ID:', message.id);
+        console.log('🕐 Timestamp:', message.timestamp.toLocaleString());
+        console.log('');
+        console.log('─'.repeat(80));
+        console.log('💬 ORIGINAL CONTENT (Raw API Response):');
+        console.log('─'.repeat(80));
+        console.log('');
+        console.log(message.content);
+        console.log('');
+        console.log('═'.repeat(80));
+        console.log('📦 Full Message Object:');
+        console.log('═'.repeat(80));
+        console.log(JSON.stringify(message, null, 2));
+        console.log('═'.repeat(80));
+    };
+
+
     return (
         <div className="flex flex-col h-full bg-white relative overflow-hidden">
+            {/* Room Loading Overlay - Modern Futuristic Design */}
+            {isLoadingRoom && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-md">
+                    <div className="flex flex-col items-center gap-6">
+                        {/* Futuristic Orbital Loader */}
+                        <div className="relative w-20 h-20">
+                            {/* Outer ring */}
+                            <div className="absolute inset-0 rounded-full border-2 border-blue-100 animate-pulse"></div>
+                            {/* Middle rotating ring */}
+                            <div className="absolute inset-1 rounded-full border-2 border-t-blue-500 border-r-blue-300 border-b-transparent border-l-transparent animate-spin"></div>
+                            {/* Inner rotating ring (opposite direction) */}
+                            <div className="absolute inset-3 rounded-full border-2 border-t-transparent border-r-transparent border-b-cyan-400 border-l-cyan-300 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }}></div>
+                            {/* Core gradient sphere */}
+                            <div className="absolute inset-5 rounded-full bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-500 shadow-lg shadow-blue-400/50 animate-pulse"></div>
+                            {/* Glowing center dot */}
+                            <div className="absolute inset-[30%] rounded-full bg-white shadow-[0_0_15px_5px_rgba(59,130,246,0.5)] animate-pulse"></div>
+                        </div>
+                        {/* Loading text with shimmer effect */}
+                        <div className="text-center">
+                            <p className="text-sm font-medium text-gray-600 animate-pulse">Loading conversation...</p>
+                            <p className="text-xs text-gray-400 mt-1">Retrieving your chat history</p>
+                        </div>
+                        {/* Progress dots */}
+                        <div className="flex gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-bounce [animation-delay:-0.3s]"></span>
+                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.15s]"></span>
+                            <span className="w-2 h-2 rounded-full bg-blue-300 animate-bounce"></span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* File Preview Modal */}
             {filePreview && (
                 <div className="fixed inset-0 z-50 flex flex-col bg-white animate-fade-in">
@@ -572,7 +799,20 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                         </div>
                     </div>
                 </div>
-                <div>{/* Optional Right Header Controls */}</div>
+                <div className="flex items-center gap-2">
+                    {/* Saving indicator */}
+                    {pendingSave && (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-full">
+                            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                            <span className="text-xs text-blue-600 font-medium">Saving...</span>
+                        </div>
+                    )}
+                    {currentRoom && (
+                        <div className="text-xs text-gray-400 truncate max-w-[150px]">
+                            {currentRoom.title}
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Chat Messages */}
@@ -582,6 +822,8 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                         key={msg.id}
                         className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"
                             } animate-slide-up`}
+
+                        onClick={() => msg.role === "ai" && handlePrintMessage(msg)}
                     >
                         <div
                             className={`flex max-w-full md:max-w-[85%] lg:max-w-[75%] gap-4 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"
