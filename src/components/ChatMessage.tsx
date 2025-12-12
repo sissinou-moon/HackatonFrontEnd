@@ -181,32 +181,52 @@ export function ChatMessage({ content, role, sources }: ChatMessageProps) {
         contentWithNewlines = contentWithNewlines.replace(/(?<!\n)###/g, '\n###');
         contentWithNewlines = contentWithNewlines.replace(/###(?=[^\s])/g, '### ');
 
-        // 2. REMOVE "Source: ..." LINES
+        // 2. REMOVE ALL "Source :" LINES (in French)
+        // This matches lines like "Source : ..." or "Source: ..." (with or without space)
         contentWithNewlines = contentWithNewlines.replace(
-            /(?:\*\*|)?Source:\s*.*?(?:\n|$)/gi,
+            /^(?:Source\s*:?\s*.*?)(?:\n|$)/gim,
             ''
         );
 
-        // 3. REMOVE "[From folder/file.ext...]" BLOCKS (New Fix)
-        // Matches [From ...] and removes it entirely
+        // 3. REMOVE ANY LINE THAT CONTAINS "Source" WITH COLON (French or English)
+        contentWithNewlines = contentWithNewlines.replace(
+            /^.*Source\s*:.*(?:\n|$)/gim,
+            ''
+        );
+
+        // 4. REMOVE "Source" IN MIDDLE OF SENTENCES (French)
+        contentWithNewlines = contentWithNewlines.replace(
+            /\s*Source\s*:\s*[^.,;!?\n]+(?:[.,;!?]|$)/gi,
+            ''
+        );
+
+        // 5. REMOVE "[From folder/file.ext...]" BLOCKS
         contentWithNewlines = contentWithNewlines.replace(
             /\[From\s+[^\]]+\]/gi,
             ''
         );
 
-        // 4. REMOVE ANY REMAINING BRACKETED FILE NAMES
-        // Detects [filename.pdf] or [filename.docx, line 1] and removes them
+        // 6. REMOVE ANY REMAINING BRACKETED FILE NAMES
         contentWithNewlines = contentWithNewlines.replace(
             /\[[^\]]*?\.(?:pdf|docx|doc|txt|xlsx|pptx)[^\]]*?\]/gi,
             ''
         );
 
-        // 5. CLEAN UP EXTRA NEWLINES
-        // The removals above leave behind empty lines; this collapses them
+        // 7. CLEAN UP EXTRA NEWLINES AND SPACES
+        // Remove multiple consecutive empty lines
         contentWithNewlines = contentWithNewlines.replace(/\n{3,}/g, '\n\n');
-        contentWithNewlines = contentWithNewlines.trim();
 
-        // 6. FIX TABLES
+        // Remove leading/trailing spaces from each line
+        contentWithNewlines = contentWithNewlines
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.length > 0) // Remove empty lines
+            .join('\n');
+
+        // Ensure proper spacing between paragraphs
+        contentWithNewlines = contentWithNewlines.replace(/([.!?])\s*(?=[A-ZÀ-ÖØ-öø-ÿ])/g, '$1\n\n');
+
+        // 8. FIX TABLES
         contentWithNewlines = contentWithNewlines.replace(/\| :--- \|/g, '| :--- |');
         contentWithNewlines = contentWithNewlines.replace(/\| :--- \| :--- \|/g, '| :--- | :--- |');
 

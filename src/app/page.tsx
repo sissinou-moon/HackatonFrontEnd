@@ -4,9 +4,13 @@ import React, { useState, useCallback } from "react";
 import { ChatSection } from "@/components/ChatSection";
 import { FilePanel } from "@/components/FilePanel";
 import { Sidebar } from "@/components/Sidebar";
+import { AuthPage } from "@/components/AuthPage";
 import { useRooms, Room, AIAnswer } from "@/hooks/useRooms";
+import { useAuth } from "@/contexts/AuthContext";
+import { Loader2 } from "lucide-react";
 
 export default function Home() {
+  const { user, loading } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [currentRoom, setCurrentRoom] = useState<Room | null>(null);
   const [isLoadingRoom, setIsLoadingRoom] = useState(false);
@@ -75,6 +79,24 @@ export default function Home() {
     return await updateRoom(roomId, { userAnswers, aiAnswers });
   }, [updateRoom]);
 
+  // Show loading screen while checking auth
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-gradient-to-br from-blue-50 via-white to-cyan-50">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-12 h-12 text-blue-600 animate-spin" />
+          <p className="text-gray-600 font-medium">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth page if not logged in
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  // Show main app if logged in
   return (
     <main className="flex h-screen w-full bg-background overflow-hidden relative">
       {/* Sidebar */}

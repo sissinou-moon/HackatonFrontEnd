@@ -154,7 +154,6 @@ export function ChatSection({
         const newPinnedAnswer: PinnedAnswer = {
             messageId: msg.id,
             content: msg.content.slice(0, 200),
-            pinnedAt: new Date().toISOString(),
         };
         const updatedPins = [...pinnedAnswers, newPinnedAnswer];
         try {
@@ -657,7 +656,7 @@ export function ChatSection({
                                             {pinnedAnswers.some(p => p.messageId === msg.id) ? "Remove from note" : "Save as note"}
                                         </button>
                                         <CopyButton
-                                            content="Text to copy here"
+                                            content={`${msg.content}`}
                                             className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
                                             size={3.5}
                                         />

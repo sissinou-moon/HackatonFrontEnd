@@ -3,6 +3,7 @@
 import React from "react";
 import { Plus, MessageSquare, Settings, LogOut, X, Trash2 } from "lucide-react";
 import { Room } from "@/hooks/useRooms";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface SidebarProps {
     isOpen: boolean;
@@ -25,6 +26,14 @@ export function Sidebar({
     onSelectRoom,
     onDeleteRoom,
 }: SidebarProps) {
+    const { logout, user } = useAuth();
+
+    const handleLogout = async () => {
+        if (confirm("Are you sure you want to log out?")) {
+            await logout();
+        }
+    };
+
     const formatDate = (dateString: string) => {
         const date = new Date(dateString);
         const now = new Date();
@@ -172,7 +181,6 @@ export function Sidebar({
                     <div className="flex-1 overflow-y-auto px-3 py-2">
                         {isLoadingRooms ? (
                             <div className="flex flex-col items-center justify-center py-8">
-                                {/* Modern Futuristic Loader */}
                                 <div className="relative w-10 h-10">
                                     <div className="absolute inset-0 rounded-full border-2 border-blue-200 animate-ping"></div>
                                     <div className="absolute inset-0 rounded-full border-2 border-t-blue-500 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
@@ -200,7 +208,16 @@ export function Sidebar({
 
                     {/* Footer Area */}
                     <div className="p-4 border-t border-gray-100 space-y-1">
-                        <button className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+                        {user && (
+                            <div className="px-3 py-2 mb-2 bg-blue-50 rounded-lg border border-blue-100">
+                                <p className="text-xs text-gray-500">Logged in as</p>
+                                <p className="text-sm font-medium text-gray-700 truncate">{user.email}</p>
+                            </div>
+                        )}
+                        <button
+                            onClick={handleLogout}
+                            className="w-full flex items-center gap-3 px-3 py-2 text-sm text-gray-600 rounded-lg hover:bg-red-50 hover:text-red-600 transition-colors"
+                        >
                             <LogOut className="w-4 h-4" />
                             <span>Log out</span>
                         </button>
