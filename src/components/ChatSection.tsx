@@ -29,7 +29,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             id: "1",
             role: "ai",
             content:
-                "Hello! I am your advanced AI assistant. I have reviewed the uploaded documents and I am ready to help you analyze, summarize, or extract insights from them.\n\nHow can I assist you today?",
+                "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
             timestamp: new Date(),
         },
     ]);
@@ -63,10 +63,12 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         setIsTyping(true);
 
         try {
-            const response = await fetch("http://localhost:3000/api/chat", {
+            // Use streaming endpoint; backend responds with SSE-style chunks
+            const response = await fetch("http://localhost:3000/api/chat?stream=true", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
+                    Accept: "text/event-stream",
                 },
                 body: JSON.stringify({
                     question: userMessageText,
@@ -74,31 +76,93 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 }),
             });
 
-            if (!response.ok) {
-                throw new Error("Failed to get response");
+            if (!response.ok || !response.body) {
+                throw new Error("Failed to get streaming response");
             }
 
-            const data = await response.json();
-            const aiContent =
-                data.answer ||
-                data.message ||
-                data.response ||
-                (typeof data === "string" ? data : JSON.stringify(data));
-
+            // Create placeholder AI message that will be updated as chunks arrive
+            const aiId = (Date.now() + 1).toString();
             const aiResponse: Message = {
-                id: (Date.now() + 1).toString(),
+                id: aiId,
                 role: "ai",
-                content: aiContent,
+                content: "",
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, aiResponse]);
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let done = false;
+            let buffer = '';
+
+            while (!done) {
+                const { value, done: readerDone } = await reader.read();
+                if (readerDone) {
+                    done = true;
+                    break;
+                }
+                const chunk = decoder.decode(value, { stream: true });
+                buffer += chunk;
+
+                // SSE messages separated by double newline
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() || '';
+
+                for (const part of parts) {
+                    const lines = part.split('\n').map(l => l.trim());
+                    if (lines.length === 0) continue;
+
+                    // detect event header
+                    let eventType = 'message';
+                    let dataLines: string[] = [];
+                    for (const line of lines) {
+                        if (line.startsWith('event:')) {
+                            eventType = line.replace('event:', '').trim();
+                        } else if (line.startsWith('data:')) {
+                            dataLines.push(line.replace('data:', '').trim());
+                        }
+                    }
+
+                    const data = dataLines.join('\n');
+
+                    if (eventType === 'message' || eventType === 'message' /* fallback */) {
+                        // append partial text
+                        setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
+                    } else if (eventType === 'done') {
+                        // final metadata event (sources) — can be parsed and appended if desired
+                        try {
+                            const json = JSON.parse(data);
+                            // Optionally append source info to last message
+                            if (json?.sources && Array.isArray(json.sources)) {
+                                const sourcesText = '\n\nSources:\n' + json.sources.map((s: any) => `- ${s.fileName} (line ${s.lineNumber})`).join('\n');
+                                setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + sourcesText } : m));
+                            }
+                        } catch (e) {
+                            // ignore parse errors
+                        }
+                    } else if (eventType === 'error') {
+                        setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + '\n\n[Error receiving response]' } : m));
+                    }
+                }
+            }
+
+            // flush any remaining buffer
+            if (buffer) {
+                const lines = buffer.split('\n').map(l => l.trim());
+                const dataLines = lines.filter(l => l.startsWith('data:')).map(l => l.replace('data:', '').trim());
+                if (dataLines.length) {
+                    const data = dataLines.join('\n');
+                    setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
+                }
+            }
+
         } catch (error) {
             console.error("Chat error:", error);
             const errorResponse: Message = {
                 id: (Date.now() + 1).toString(),
                 role: "ai",
                 content:
-                    "I apologize, but I encountered an error while processing your request. Please try again.",
+                    "désolé j'ai eu un petit probéme , pouvez veus ressayer plutard ?",
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorResponse]);
