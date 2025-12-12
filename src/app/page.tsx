@@ -90,10 +90,10 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col md:flex-row h-full transition-all duration-300 ease-in-out">
+      <div className="flex-1 flex flex-col md:flex-row h-full overflow-hidden">
 
-        {/* Chat Section: 3.75/5 width (75%) on Desktop */}
-        <section className="h-full w-full md:w-[75%] border-r border-gray-100 shadow-[4px_0_24px_-12px_rgba(0,0,0,0.05)] z-10 relative">
+        {/* Chat Section: Takes all remaining space, restricted from growing */}
+        <section className="flex-1 h-full min-w-0 flex flex-col border-r border-gray-100 bg-white relative">
           <ChatSection
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             currentRoom={currentRoom}
@@ -103,15 +103,12 @@ export default function Home() {
           />
         </section>
 
-        {/* Files Panel: 1.25/5 width (25%) on Desktop */}
-        <section className="hidden md:flex flex-col h-full md:w-[25%] bg-gray-50/30">
+        {/* Files Panel: Strictly fixed width, no shrinking or growing */}
+        <section className="hidden md:flex flex-col h-full w-[350px] min-w-[350px] max-w-[350px] bg-gray-50/30 border-l border-gray-100 flex-shrink-0 z-20">
           <FilePanel />
         </section>
 
-        {/* Mobile View Handling:
-            - Chat takes full width.
-            - Files hidden or accessible via other means (not specified, keeping hidden for now as per previous instructions for simple mobile view)
-        */}
+        {/* Mobile View Handling */}
       </div>
     </main>
   );
