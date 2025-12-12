@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, JSX } from "react";
-import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText } from "lucide-react";
+import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 
 interface Message {
@@ -15,7 +15,15 @@ interface ChatSectionProps {
     onToggleSidebar: () => void;
 }
 
+interface FilePreview {
+    fileName: string;
+    fileUrl: string;
+    fileType: 'pdf' | 'docx' | 'other';
+}
+
 export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
+    const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+    const [isLoadingFile, setIsLoadingFile] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
         {
             id: "1",
@@ -99,106 +107,255 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         }
     };
 
-    const openFile = async (fileName: string) => {
+    const openFile = async (baseFileName: string) => {
+        setIsLoadingFile(true);
         try {
-            // Assuming file is in 'documents' bucket. 
-            // We can get a public URL or signed URL. 
-            // Since user said "open a dialog that open the exact file", simplified version is opening in new tab.
-            const { data } = supabase.storage.from('documents').getPublicUrl(fileName);
-            if (data.publicUrl) {
-                window.open(data.publicUrl, '_blank');
-            } else {
-                alert("Could not find file URL");
+            console.log("🔍 Searching for file:", baseFileName);
+
+            // Step 1: List ALL files in the bucket to see what we have
+            const { data: files, error: listError } = await supabase
+                .storage
+                .from('documents')
+                .list('', {
+                    limit: 1000,
+                    offset: 0,
+                });
+
+            if (listError) {
+                console.error("❌ Error listing files:", listError);
+                throw listError;
             }
+
+            console.log("📁 Available files:", files?.map(f => f.name));
+
+            if (!files || files.length === 0) {
+                alert("No files found in storage bucket");
+                return;
+            }
+
+            // Step 2: Clean the filename to match
+            // Remove quotes, trim spaces, and normalize
+            const cleanFileName = baseFileName
+                .replace(/^["']|["']$/g, '') // Remove quotes
+                .trim();
+
+            console.log("🧹 Cleaned filename:", cleanFileName);
+
+            // Step 3: Try multiple matching strategies
+            let targetFile = null;
+
+            // Strategy 1: Exact match
+            targetFile = files.find(f => f.name === cleanFileName);
+            if (targetFile) console.log("✅ Found exact match:", targetFile.name);
+
+            // Strategy 2: Case-insensitive match
+            if (!targetFile) {
+                targetFile = files.find(f =>
+                    f.name.toLowerCase() === cleanFileName.toLowerCase()
+                );
+                if (targetFile) console.log("✅ Found case-insensitive match:", targetFile.name);
+            }
+
+            // Strategy 3: Partial match (file contains the search term)
+            if (!targetFile) {
+                targetFile = files.find(f =>
+                    f.name.toLowerCase().includes(cleanFileName.toLowerCase())
+                );
+                if (targetFile) console.log("✅ Found partial match:", targetFile.name);
+            }
+
+            // Strategy 4: Match by filename without extension
+            if (!targetFile) {
+                const baseNameWithoutExt = cleanFileName.replace(/\.[^/.]+$/, "");
+                targetFile = files.find(f =>
+                    f.name.toLowerCase().includes(baseNameWithoutExt.toLowerCase())
+                );
+                if (targetFile) console.log("✅ Found match without extension:", targetFile.name);
+            }
+
+            // Strategy 5: Fuzzy match - match the core filename
+            if (!targetFile) {
+                // Remove special characters and match
+                const normalizedSearch = cleanFileName
+                    .replace(/[^a-zA-Z0-9]/g, '')
+                    .toLowerCase();
+
+                targetFile = files.find(f => {
+                    const normalizedFile = f.name
+                        .replace(/[^a-zA-Z0-9]/g, '')
+                        .toLowerCase();
+                    return normalizedFile.includes(normalizedSearch);
+                });
+                if (targetFile) console.log("✅ Found fuzzy match:", targetFile.name);
+            }
+
+            if (!targetFile) {
+                console.error("❌ No matching file found for:", cleanFileName);
+                alert(`File not found: "${cleanFileName}"\n\nAvailable files:\n${files.map(f => f.name).join('\n')}`);
+                return;
+            }
+
+            console.log("🎯 Using file:", targetFile.name);
+
+            // Step 4: Get the public URL
+            const { data: urlData } = supabase
+                .storage
+                .from('documents')
+                .getPublicUrl(targetFile.name);
+
+            if (!urlData?.publicUrl) {
+                alert("Could not generate file URL");
+                return;
+            }
+
+            console.log("🔗 Public URL:", urlData.publicUrl);
+
+            // Step 5: Determine file type
+            const extension = targetFile.name.toLowerCase().split('.').pop();
+            let fileType: 'pdf' | 'docx' | 'other' = 'other';
+
+            if (extension === 'pdf') {
+                fileType = 'pdf';
+            } else if (extension === 'docx' || extension === 'doc') {
+                fileType = 'docx';
+            }
+
+            console.log("📄 File type:", fileType);
+
+            // Step 6: Test if URL is accessible
+            try {
+                const testResponse = await fetch(urlData.publicUrl, { method: 'HEAD' });
+                if (!testResponse.ok) {
+                    console.error("❌ File URL not accessible:", testResponse.status);
+                    alert(`File exists but URL is not accessible. Status: ${testResponse.status}\n\nMake sure your Supabase bucket is public!`);
+                    return;
+                }
+                console.log("✅ File URL is accessible");
+            } catch (fetchError) {
+                console.error("❌ Error testing URL:", fetchError);
+            }
+
+            // Step 7: Set preview
+            setFilePreview({
+                fileName: cleanFileName,
+                fileUrl: urlData.publicUrl,
+                fileType
+            });
+
         } catch (e) {
-            console.error("Error opening file", e);
+            console.error("❌ Error opening file:", e);
+            alert(`Error opening file: ${e instanceof Error ? e.message : 'Unknown error'}`);
+        } finally {
+            setIsLoadingFile(false);
         }
+    }
+
+    const closeFilePreview = () => {
+        setFilePreview(null);
+    }
+
+    // Get the viewer URL for different file types
+    const getViewerUrl = (fileUrl: string, fileType: 'pdf' | 'docx' | 'other') => {
+        if (fileType === 'pdf') {
+            // For PDF, we can use the direct URL in an iframe
+            return fileUrl;
+        } else if (fileType === 'docx') {
+            // For DOCX, use Microsoft Office Online viewer or Google Docs viewer
+            return `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+        }
+        return fileUrl;
     }
 
     // Helper component to render content with interactive citations and tables
     const MessageContent = ({ content }: { content: string }) => {
         // 1. Initial cleanup
-        let processedContent = content.replace(/`/g, '');
-        processedContent = processedContent.replace(/^\s*\*\s+/gm, '➜ ');
+        const processedContent = content
+            .replace(/`/g, '')
+            .replace(/^\s*\*\s+/gm, '╰┈➤ ');
 
-        // 2. Rich Text Renderer
-        const renderRichText = (text: string) => {
-            const elements: (string | JSX.Element)[] = [];
-            let elementKey = 0;
+        // 2. Rich Text Renderer with memoized regex
+        const renderRichText = React.useMemo(() => {
+            return (text: string) => {
+                const elements: (string | JSX.Element)[] = [];
+                let elementKey = 0;
 
-            const allCitationsRegex = /(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["""']([^"""']+)["""'],?\s*à la ligne\s*\d+)|(\*\s*--\s*([^-]+)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*line\s*(\d+)\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)/gi;
+                // Comprehensive citation regex - covers all formats including standalone quoted files, 'From file:', and 'From [filename]' patterns
+                const citationRegex = /(\[Source:\s*([^,\]]+),\s*lines?\s*\d+\])|(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["""']([^"""']+)["""'],?\s*à la ligne\s*\d+)|(le fichier\s+--?\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--?\s*à la ligne\s*\d+)|(Source\s*:\s*(?:--\s*)?(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*(?:,|--)?\s*lignes?\s*\d+)|(\*\s*--\s*(.+?)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*lines?\s*\d+\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|("([^"]+\.(?:docx?|pdf|xlsx?|pptx?|txt))")|(From file:\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(From\s+(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))/gi;
 
-            let lastIndex = 0;
-            let match;
+                let lastIndex = 0;
+                let match;
 
-            while ((match = allCitationsRegex.exec(text)) !== null) {
-                if (match.index > lastIndex) {
-                    elements.push(text.slice(lastIndex, match.index));
-                }
+                while ((match = citationRegex.exec(text)) !== null) {
+                    if (match.index > lastIndex) {
+                        elements.push(text.slice(lastIndex, match.index));
+                    }
 
-                let fileName = '';
-                if (match[2]) fileName = match[2].trim();
-                else if (match[4]) fileName = match[4].trim();
-                else if (match[6]) fileName = match[6].trim();
-                else if (match[8]) fileName = match[8].trim();
-                else if (match[11]) fileName = match[11].trim();
-                else if (match[13]) fileName = match[13].trim();
+                    // Extract filename from matched groups
+                    let fileName = (
+                        match[2] || match[4] || match[6] || match[8] ||
+                        match[10] || match[12] || match[14] || match[17] || match[19] || match[21] || match[23] || match[25]
+                    )?.trim();
 
-                if (fileName) {
-                    elements.push(
-                        <button
-                            key={`citation-${elementKey++}`}
-                            onClick={() => openFile(fileName)}
-                            className="inline mx-1 font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
-                            title={`Open ${fileName}`}
-                        >
-                            {fileName}
-                        </button>
-                    );
-                }
-                lastIndex = allCitationsRegex.lastIndex;
-            }
+                    // Remove quotes if present
+                    if (fileName) {
+                        fileName = fileName.replace(/^["']|["']$/g, '');
 
-            if (lastIndex < text.length) {
-                elements.push(text.slice(lastIndex));
-            }
-
-            const finalElements: (string | JSX.Element)[] = [];
-            elements.forEach((element, idx) => {
-                if (typeof element === 'string') {
-                    const boldRegex = /\*\*([^\*]+)\*\*/g;
-                    let lastBoldIndex = 0;
-                    let boldMatch;
-
-                    while ((boldMatch = boldRegex.exec(element)) !== null) {
-                        if (boldMatch.index > lastBoldIndex) {
-                            finalElements.push(element.slice(lastBoldIndex, boldMatch.index));
-                        }
-                        finalElements.push(
-                            <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
-                                {boldMatch[1]}
-                            </strong>
+                        elements.push(
+                            <button
+                                key={`cite-${elementKey++}`}
+                                onClick={() => openFile(fileName)}
+                                className="inline mx-1 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
+                                title={`Open ${fileName}`}
+                            >
+                                {fileName}
+                            </button>
                         );
-                        lastBoldIndex = boldRegex.lastIndex;
                     }
-                    if (lastBoldIndex < element.length) {
-                        finalElements.push(element.slice(lastBoldIndex));
-                    }
-                } else {
-                    finalElements.push(element);
+                    lastIndex = citationRegex.lastIndex;
                 }
-            });
 
-            return finalElements;
-        };
+                if (lastIndex < text.length) {
+                    elements.push(text.slice(lastIndex));
+                }
+
+                // Process bold text
+                const finalElements: (string | JSX.Element)[] = [];
+                const boldRegex = /\*\*([^\*]+)\*\*/g;
+
+                elements.forEach((element, idx) => {
+                    if (typeof element === 'string') {
+                        let lastBoldIndex = 0;
+                        let boldMatch;
+
+                        while ((boldMatch = boldRegex.exec(element)) !== null) {
+                            if (boldMatch.index > lastBoldIndex) {
+                                finalElements.push(element.slice(lastBoldIndex, boldMatch.index));
+                            }
+                            finalElements.push(
+                                <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
+                                    {boldMatch[1]}
+                                </strong>
+                            );
+                            lastBoldIndex = boldRegex.lastIndex;
+                        }
+                        if (lastBoldIndex < element.length) {
+                            finalElements.push(element.slice(lastBoldIndex));
+                        }
+                    } else {
+                        finalElements.push(element);
+                    }
+                });
+
+                return finalElements;
+            };
+        }, []);
 
         // 3. Block Parser for Tables
         const lines = processedContent.split('\n');
         const blocks: { type: 'text' | 'table', content: string[] }[] = [];
         let currentBlock: { type: 'text' | 'table', content: string[] } = { type: 'text', content: [] };
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
+        for (const line of lines) {
             const isTableLine = line.trim().startsWith('|');
 
             if (isTableLine) {
@@ -217,11 +374,15 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         }
         if (currentBlock.content.length > 0) blocks.push(currentBlock);
 
+        // 4. Render blocks
         return (
             <div className="space-y-4">
                 {blocks.map((block, index) => {
-                    if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('---')) {
-                        const parseRow = (row: string) => row.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+                    if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('-')) {
+                        const parseRow = (row: string) =>
+                            row.split('|')
+                                .map(c => c.trim())
+                                .filter((c, i, arr) => i > 0 && i < arr.length - 1);
 
                         const headers = parseRow(block.content[0]);
                         const rows = block.content.slice(2).map(parseRow);
@@ -255,7 +416,11 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                     } else {
                         const text = block.content.join('\n').trim();
                         if (!text) return null;
-                        return <div key={index} className="whitespace-pre-wrap leading-7">{renderRichText(text)}</div>
+                        return (
+                            <div key={index} className="whitespace-pre-wrap leading-7">
+                                {renderRichText(text)}
+                            </div>
+                        );
                     }
                 })}
             </div>
@@ -264,6 +429,66 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
 
     return (
         <div className="flex flex-col h-full bg-white relative overflow-hidden">
+            {/* File Preview Modal */}
+            {filePreview && (
+                <div className="fixed inset-0 z-50 flex flex-col bg-white animate-fade-in">
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow-lg">
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={closeFilePreview}
+                                className="p-2 hover:bg-white/20 rounded-lg transition-colors flex items-center gap-2"
+                            >
+                                <ArrowLeft className="w-5 h-5" />
+                                <span className="text-sm font-medium hidden sm:inline">Back to Chat</span>
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2 flex-1 justify-center">
+                            <FileText className="w-5 h-5" />
+                            <h2 className="text-sm font-semibold truncate max-w-[200px] sm:max-w-[400px]">
+                                {filePreview.fileName}
+                            </h2>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <a
+                                href={filePreview.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-sm font-medium transition-colors hidden sm:inline-flex items-center gap-1"
+                            >
+                                Open in New Tab
+                            </a>
+                            <button
+                                onClick={closeFilePreview}
+                                className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* File Content Viewer */}
+                    <div className="flex-1 bg-gray-100 overflow-hidden">
+                        <iframe
+                            src={getViewerUrl(filePreview.fileUrl, filePreview.fileType)}
+                            className="w-full h-full border-0"
+                            title={`Preview: ${filePreview.fileName}`}
+                            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Loading Overlay */}
+            {isLoadingFile && (
+                <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl p-6 shadow-2xl flex flex-col items-center gap-3">
+                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+                        <p className="text-gray-600 font-medium">Loading file...</p>
+                    </div>
+                </div>
+            )}
+
             {/* Header Area */}
             <div className="flex items-center px-4 py-3 border-b border-gray-100 bg-white/90 backdrop-blur-md z-10 sticky top-0 justify-between">
                 <div className="flex items-center">
@@ -379,13 +604,15 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
 
                     <form
                         onSubmit={handleSendMessage}
-                        className="relative flex items-end gap-2 bg-gray-50 border border-gray-200 rounded-[24px] p-2 focus-within:ring-2 focus-within:ring-primary/10 focus-within:border-primary/40 transition-all shadow-inner hover:bg-white hover:shadow-sm"
+                        className="relative flex items-end gap-2 bg-gray-50 border border-gray-200 rounded-[24px] p-2 transition-all shadow-inner hover:bg-white hover:shadow-sm focus:ring-0"
                     >
                         <textarea
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
                             placeholder="Ask a question about your files..."
-                            className="w-full max-h-32 bg-transparent text-gray-800 placeholder-gray-400 border-none focus:ring-0 py-3 pl-4 pr-12 resize-none text-[15px] leading-relaxed"
+                            className="w-full max-h-32 bg-transparent text-gray-800 placeholder-gray-400 border-none py-3 pl-4 pr-12 resize-none text-[15px] leading-relaxed 
+                            ring-0 focus:ring-0
+                            focus:outline-none"
                             rows={1}
                             onInput={(e) => {
                                 const target = e.target as HTMLTextAreaElement;
