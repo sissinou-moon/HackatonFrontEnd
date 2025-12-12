@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, JSX } from "react";
 import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { ChatMessage } from "./ChatMessage";
+import { Room, PinnedAnswer } from "@/hooks/useRooms";
 
 interface Message {
     id: string;
@@ -14,6 +15,10 @@ interface Message {
 
 interface ChatSectionProps {
     onToggleSidebar: () => void;
+    currentRoom: Room | null;
+    isLoadingRoom: boolean;
+    onSaveConversation: (title: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
+    onUpdateConversation: (roomId: string, userAnswers: string[], aiAnswers: string[]) => Promise<Room | null>;
 }
 
 interface FilePreview {
@@ -22,26 +27,154 @@ interface FilePreview {
     fileType: 'pdf' | 'docx' | 'other';
 }
 
-export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
+export function ChatSection({
+    onToggleSidebar,
+    currentRoom,
+    isLoadingRoom,
+    onSaveConversation,
+    onUpdateConversation
+}: ChatSectionProps) {
     const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
     const [isLoadingFile, setIsLoadingFile] = useState(false);
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: "1",
-            role: "ai",
-            content:
-                "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
-            timestamp: new Date(),
-        },
-    ]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
     const [currText, setCurrText] = useState("");
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+    const [pendingSave, setPendingSave] = useState(false);
+    const [pinnedAnswers, setPinnedAnswers] = useState<PinnedAnswer[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const roomIdRef = useRef<string | null>(null);
+    const messageRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+
+    // Initialize or reset messages based on current room
+    useEffect(() => {
+        if (currentRoom) {
+            // Load messages from room
+            const loadedMessages: Message[] = [];
+            const userAnswers = currentRoom.userAnswers || [];
+            const aiAnswers = currentRoom.aiAnswers || [];
+
+            // Add welcome message first
+            loadedMessages.push({
+                id: "welcome",
+                role: "ai",
+                content: "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
+                timestamp: new Date(currentRoom.created_at),
+            });
+
+            // Interleave user and AI messages
+            for (let i = 0; i < Math.max(userAnswers.length, aiAnswers.length); i++) {
+                if (userAnswers[i]) {
+                    loadedMessages.push({
+                        id: `user-${i}`,
+                        role: "user",
+                        content: userAnswers[i],
+                        timestamp: new Date(currentRoom.created_at),
+                    });
+                }
+                if (aiAnswers[i]) {
+                    loadedMessages.push({
+                        id: `ai-${i}`,
+                        role: "ai",
+                        content: aiAnswers[i],
+                        timestamp: new Date(currentRoom.created_at),
+                    });
+                }
+            }
+
+            setMessages(loadedMessages);
+            roomIdRef.current = currentRoom.id;
+            // Load pinned answers from room
+            setPinnedAnswers(currentRoom.pinAnswer || []);
+        } else {
+            // New chat - reset to welcome message only
+            setMessages([
+                {
+                    id: "1",
+                    role: "ai",
+                    content: "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
+                    timestamp: new Date(),
+                },
+            ]);
+            roomIdRef.current = null;
+            setPinnedAnswers([]);
+        }
+    }, [currentRoom]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    // Scroll to a specific message by ID
+    const scrollToMessage = (messageId: string) => {
+        const messageElement = messageRefs.current[messageId];
+        if (messageElement) {
+            messageElement.scrollIntoView({ behavior: "smooth", block: "start" });
+            // Highlight the message briefly
+            messageElement.classList.add("ring-2", "ring-blue-400", "ring-offset-2");
+            setTimeout(() => {
+                messageElement.classList.remove("ring-2", "ring-blue-400", "ring-offset-2");
+            }, 2000);
+        }
+    };
+
+    // Remove a message from pinned notes
+    const removeFromNote = async (messageId: string) => {
+        if (!roomIdRef.current) return;
+
+        const updatedPins = pinnedAnswers.filter(p => p.messageId !== messageId);
+
+        try {
+            const { error } = await supabase
+                .from("history")
+                .update({ pinAnswer: updatedPins })
+                .eq("id", roomIdRef.current);
+
+            if (error) throw error;
+
+            setPinnedAnswers(updatedPins);
+        } catch (err) {
+            console.error("Failed to remove pin:", err);
+            alert("Could not remove note. Please try again.");
+        }
+    };
+
+    // Save a message as a pinned note
+    const saveAsNote = async (msg: Message) => {
+        if (!roomIdRef.current) {
+            alert("Please save the conversation first before pinning a note.");
+            return;
+        }
+
+        // If already pinned, remove it instead
+        if (pinnedAnswers.some(p => p.messageId === msg.id)) {
+            await removeFromNote(msg.id);
+            return;
+        }
+
+        const newPinnedAnswer: PinnedAnswer = {
+            messageId: msg.id,
+            content: msg.content.slice(0, 200), // Store first 200 chars as preview
+            pinnedAt: new Date().toISOString(),
+        };
+
+        const updatedPins = [...pinnedAnswers, newPinnedAnswer];
+
+        try {
+            // Update Supabase directly
+            const { error } = await supabase
+                .from("history")
+                .update({ pinAnswer: updatedPins })
+                .eq("id", roomIdRef.current);
+
+            if (error) throw error;
+
+            setPinnedAnswers(updatedPins);
+        } catch (err) {
+            console.error("Failed to pin answer:", err);
+            alert("Could not save note. Please try again.");
+        }
     };
 
     useEffect(() => {
@@ -75,7 +208,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 },
                 body: JSON.stringify({
                     question: userMessageText,
-                    topK: 3,
+                    topK: 10,
                 }),
             });
 
@@ -102,6 +235,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             let done = false;
             let fullText = '';
             let buffer = '';
+            let fullAiResponse = '';
 
             while (!done) {
                 const { value, done: readerDone } = await reader.read();
@@ -121,6 +255,10 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 for (const message of messages) {
                     const lines = message.split('\n');
                     const eventDataLines: string[] = [];
+                for (const part of parts) {
+                    // Don't trim the lines - preserve whitespace in content!
+                    const lines = part.split('\n');
+                    if (lines.length === 0) continue;
 
                     for (const line of lines) {
                         if (line.startsWith('data:')) {
@@ -156,6 +294,37 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                         if (data && !data.trim().startsWith('{') && !data.trim().startsWith('[')) {
                             fullText += data;
                             setCurrText(fullText);
+                        // Only trim for checking prefixes, not the content itself
+                        const trimmedLine = line.trim();
+                        if (trimmedLine.startsWith('event:')) {
+                            eventType = trimmedLine.replace('event:', '').trim();
+                        } else if (trimmedLine.startsWith('data:')) {
+                            // Preserve the data content exactly - don't trim!
+                            // Remove only the "data:" prefix, keep all spacing
+                            const dataContent = line.replace(/^\s*data:/, '');
+                            dataLines.push(dataContent);
+                        }
+                    }
+
+                    // Join data lines preserving newlines
+                    const data = dataLines.join('\n');
+
+                    if (eventType === 'message') {
+                        // append partial text - data already has proper spacing
+                        fullAiResponse += data;
+                        setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
+                    } else if (eventType === 'done') {
+                        // final metadata event (sources) — can be parsed and appended if desired
+                        try {
+                            const json = JSON.parse(data.trim());
+                            // Optionally append source info to last message
+                            if (json?.sources && Array.isArray(json.sources)) {
+                                const sourcesText = '\n\nSources:\n' + json.sources.map((s: any) => `- ${s.fileName} (line ${s.lineNumber})`).join('\n');
+                                fullAiResponse += sourcesText;
+                                setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + sourcesText } : m));
+                            }
+                        } catch (e) {
+                            // ignore parse errors
                         }
                     }
                 }
@@ -166,6 +335,59 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText } : m));
             setStreamingMessageId(null);
             setCurrText("");
+            // flush any remaining buffer
+            if (buffer) {
+                const lines = buffer.split('\n');
+                const dataLines = lines
+                    .filter(l => l.trim().startsWith('data:'))
+                    .map(l => l.replace(/^\s*data:/, '')); // Don't trim content!
+                if (dataLines.length) {
+                    const data = dataLines.join('\n');
+                    fullAiResponse += data;
+                    setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
+                }
+            }
+
+            // ===== SAVE CONVERSATION AFTER AI RESPONSE COMPLETES =====
+            setIsTyping(false);
+            setPendingSave(true);
+
+            // Get current conversation history
+            const currentMessages = await new Promise<Message[]>((resolve) => {
+                setMessages(prev => {
+                    resolve(prev);
+                    return prev;
+                });
+            });
+
+            // Extract user and AI answers (excluding welcome message)
+            const userAnswers = currentMessages
+                .filter(m => m.role === 'user')
+                .map(m => m.content);
+
+            const aiAnswers = currentMessages
+                .filter(m => m.role === 'ai' && m.id !== 'welcome' && m.id !== '1')
+                .map(m => m.content);
+
+            // Generate title from first user message
+            const title = userAnswers[0]?.slice(0, 50) || 'New Conversation';
+
+            try {
+                if (roomIdRef.current) {
+                    // Update existing room
+                    await onUpdateConversation(roomIdRef.current, userAnswers, aiAnswers);
+                } else {
+                    // Create new room
+                    const newRoom = await onSaveConversation(title, userAnswers, aiAnswers);
+                    if (newRoom) {
+                        roomIdRef.current = newRoom.id;
+                    }
+                }
+            } catch (saveError) {
+                console.error("Failed to save conversation:", saveError);
+            } finally {
+                setPendingSave(false);
+            }
 
         } catch (error) {
             console.error("Chat error:", error);
@@ -177,7 +399,6 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 timestamp: new Date(),
             };
             setMessages((prev) => [...prev, errorResponse]);
-        } finally {
             setIsTyping(false);
         }
     };
@@ -354,10 +575,286 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         ]);
         setInputValue("");
         setFilePreview(null);
+    // Helper component to render content with interactive citations and tables
+    const MessageContent = ({ content }: { content: string }) => {
+        // ============================================================================
+        // 1. CONTENT NORMALIZATION
+        // ============================================================================
+        const processedContent = content
+            .replace(/\r\n/g, '\n')                       // Normalize Windows line breaks
+            .replace(/\n{3,}/g, '\n\n')                   // Prevent excessive blank spaces
+            .replace(/[ \t]+$/gm, '')                     // Trim trailing spaces per line
+            .replace(/\s*\*\s+(?=[A-Za-z0-9])/g, '\n* ')  // Ensure bullets start on new line
+            .replace(/^\s*\*\s+/gm, '• ')                 // Convert "* " to "• " at line start
+            .replace(/(?<!\n)•\s+/g, '\n• ')              // Force bullets to always start new line
+            .replace(/(?<!•)\*(?!\s|$)/g, '');            // Remove stray "*" not used as bullets
+
+        // ============================================================================
+        // 2. RICH TEXT RENDERER (Citations, Bold, Highlight)
+        // ============================================================================
+        const renderRichText = React.useMemo(() => {
+            return (text: string) => {
+                const elements: (string | JSX.Element)[] = [];
+                let elementKey = 0;
+
+                // Citation regex - matches multiple file reference formats
+                const citationRegex = /(\[Source:\s*([^,\]]+),\s*lines?\s*\d+\])|(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["']([^"']+)["'],?\s*à la ligne\s*\d+)|(le fichier\s+--?\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--?\s*à la ligne\s*\d+)|(Source\s*:\s*(?:--\s*)?(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*(?:,|--)??\s*lignes?\s*\d+)|(\*\s*--\s*(.+?)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*lines?\s*\d+\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|("([^"]+\.(?:docx?|pdf|xlsx?|pptx?|txt))")|(From file:\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(From\s+(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(--\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--)/gi;
+
+                let lastIndex = 0;
+                let match;
+
+                // Extract citations and replace with clickable buttons
+                while ((match = citationRegex.exec(text)) !== null) {
+                    if (match.index > lastIndex) {
+                        elements.push(text.slice(lastIndex, match.index));
+                    }
+
+                    // Extract filename from any matched group
+                    let fileName = (
+                        match[2] || match[4] || match[6] || match[8] ||
+                        match[10] || match[12] || match[14] || match[17] ||
+                        match[19] || match[21] || match[23] || match[25] || match[27]
+                    )?.trim().replace(/^["']|["']$/g, '');
+
+                    if (fileName) {
+                        elements.push(
+                            <button
+                                key={`cite-${elementKey++}`}
+                                onClick={() => openFile(fileName)}
+                                className="inline mx-1 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
+                                title={`Open ${fileName}`}
+                            >
+                                {fileName}
+                            </button>
+                        );
+                    }
+
+                    lastIndex = citationRegex.lastIndex;
+                }
+
+                if (lastIndex < text.length) {
+                    elements.push(text.slice(lastIndex));
+                }
+
+                // Process bold (**text**) and highlighted ("text") text
+                const finalElements: (string | JSX.Element)[] = [];
+                const formattingRegex = /\*\*([^\*]+)\*\*|"([^"]+)"/g;
+
+                elements.forEach((element, idx) => {
+                    if (typeof element === 'string') {
+                        let lastIndex = 0;
+                        let fmtMatch;
+
+                        while ((fmtMatch = formattingRegex.exec(element)) !== null) {
+                            if (fmtMatch.index > lastIndex) {
+                                finalElements.push(element.slice(lastIndex, fmtMatch.index));
+                            }
+
+                            if (fmtMatch[1]) {
+                                // Bold text
+                                finalElements.push(
+                                    <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
+                                        {fmtMatch[1]}
+                                    </strong>
+                                );
+                            } else if (fmtMatch[2]) {
+                                // Highlighted text
+                                finalElements.push(
+                                    <span
+                                        key={`highlight-${idx}-${elementKey++}`}
+                                        className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded text-sm font-medium"
+                                    >
+                                        {fmtMatch[2]}
+                                    </span>
+                                );
+                            }
+
+                            lastIndex = formattingRegex.lastIndex;
+                        }
+
+                        if (lastIndex < element.length) {
+                            finalElements.push(element.slice(lastIndex));
+                        }
+                    } else {
+                        finalElements.push(element);
+                    }
+                });
+
+                return finalElements;
+            };
+        }, []);
+
+        // ============================================================================
+        // 3. BLOCK STRUCTURE DETECTION (Tables vs Text)
+        // ============================================================================
+        const lines = processedContent.split('\n');
+        const blocks: { type: 'text' | 'table', content: string[] }[] = [];
+        let currentBlock: { type: 'text' | 'table', content: string[] } = {
+            type: 'text',
+            content: []
+        };
+
+        for (const line of lines) {
+            const isTableLine = line.trim().startsWith('|');
+
+            if (isTableLine) {
+                if (currentBlock.type !== 'table') {
+                    if (currentBlock.content.length > 0) blocks.push(currentBlock);
+                    currentBlock = { type: 'table', content: [] };
+                }
+                currentBlock.content.push(line);
+            } else {
+                if (currentBlock.type === 'table') {
+                    blocks.push(currentBlock);
+                    currentBlock = { type: 'text', content: [] };
+                }
+                currentBlock.content.push(line);
+            }
+        }
+
+        if (currentBlock.content.length > 0) {
+            blocks.push(currentBlock);
+        }
+
+        // ============================================================================
+        // 4. RENDER BLOCKS
+        // ============================================================================
+        return (
+            <div className="space-y-4">
+                {blocks.map((block, index) => {
+
+                    // TABLE BLOCK RENDERING
+                    if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('-')) {
+                        const parseRow = (row: string) =>
+                            row.split('|')
+                                .map(c => c.trim())
+                                .filter((c, i, arr) => i > 0 && i < arr.length - 1);
+
+                        const headers = parseRow(block.content[0]);
+                        const rows = block.content.slice(2).map(parseRow);
+
+                        return (
+                            <div key={index} className="overflow-x-auto my-4 rounded-lg border border-gray-200 shadow-sm">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-gray-50">
+                                        <tr>
+                                            {headers.map((h, i) => (
+                                                <th
+                                                    key={i}
+                                                    className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+                                                >
+                                                    {renderRichText(h)}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200 text-sm text-gray-700">
+                                        {rows.map((row, rI) => (
+                                            <tr key={rI} className={rI % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                                {row.map((cell, cI) => (
+                                                    <td key={cI} className="px-4 py-3 whitespace-pre-wrap leading-relaxed">
+                                                        {renderRichText(cell)}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    }
+
+                    // TEXT BLOCK RENDERING
+                    const textLines = block.content;
+
+                    return (
+                        <div key={index}>
+                            {textLines.map((line, lineIdx) => {
+                                const trimmedLine = line.trim();
+
+                                // Empty line = spacing
+                                if (!trimmedLine) {
+                                    return <div key={lineIdx} className="h-3" />;
+                                }
+
+                                // Check if bullet point
+                                const isBullet = trimmedLine.startsWith('•');
+
+                                return (
+                                    <div
+                                        key={lineIdx}
+                                        className={`leading-7 ${isBullet ? 'pl-4' : ''}`}
+                                    >
+                                        {renderRichText(trimmedLine)}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    );
+                })}
+            </div>
+        );
     };
+
+    const handlePrintMessage = (message: Message) => {
+        if (message.role !== 'ai') return;
+
+        console.clear();
+        console.log('═'.repeat(80));
+        console.log('🤖 AI MESSAGE - ORIGINAL RESPONSE');
+        console.log('═'.repeat(80));
+        console.log('');
+        console.log('📋 Message ID:', message.id);
+        console.log('🕐 Timestamp:', message.timestamp.toLocaleString());
+        console.log('');
+        console.log('─'.repeat(80));
+        console.log('💬 ORIGINAL CONTENT (Raw API Response):');
+        console.log('─'.repeat(80));
+        console.log('');
+        console.log(message.content);
+        console.log('');
+        console.log('═'.repeat(80));
+        console.log('📦 Full Message Object:');
+        console.log('═'.repeat(80));
+        console.log(JSON.stringify(message, null, 2));
+        console.log('═'.repeat(80));
+    };
+
 
     return (
         <div className="flex flex-col h-full bg-white relative overflow-hidden">
+            {/* Room Loading Overlay - Modern Futuristic Design */}
+            {isLoadingRoom && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-md">
+                    <div className="flex flex-col items-center gap-6">
+                        {/* Futuristic Orbital Loader */}
+                        <div className="relative w-20 h-20">
+                            {/* Outer ring */}
+                            <div className="absolute inset-0 rounded-full border-2 border-blue-100 animate-pulse"></div>
+                            {/* Middle rotating ring */}
+                            <div className="absolute inset-1 rounded-full border-2 border-t-blue-500 border-r-blue-300 border-b-transparent border-l-transparent animate-spin"></div>
+                            {/* Inner rotating ring (opposite direction) */}
+                            <div className="absolute inset-3 rounded-full border-2 border-t-transparent border-r-transparent border-b-cyan-400 border-l-cyan-300 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }}></div>
+                            {/* Core gradient sphere */}
+                            <div className="absolute inset-5 rounded-full bg-gradient-to-br from-blue-500 via-blue-600 to-cyan-500 shadow-lg shadow-blue-400/50 animate-pulse"></div>
+                            {/* Glowing center dot */}
+                            <div className="absolute inset-[30%] rounded-full bg-white shadow-[0_0_15px_5px_rgba(59,130,246,0.5)] animate-pulse"></div>
+                        </div>
+                        {/* Loading text with shimmer effect */}
+                        <div className="text-center">
+                            <p className="text-sm font-medium text-gray-600 animate-pulse">Loading conversation...</p>
+                            <p className="text-xs text-gray-400 mt-1">Retrieving your chat history</p>
+                        </div>
+                        {/* Progress dots */}
+                        <div className="flex gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-bounce [animation-delay:-0.3s]"></span>
+                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce [animation-delay:-0.15s]"></span>
+                            <span className="w-2 h-2 rounded-full bg-blue-300 animate-bounce"></span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* File Preview Modal */}
             {filePreview && (
                 <div className="fixed inset-0 z-50 flex flex-col bg-white animate-fade-in">
@@ -445,16 +942,61 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                         <Plus className="w-4 h-4" />
                         <span className="hidden sm:inline">New Chat</span>
                     </button>
+                <div className="flex items-center gap-2">
+                    {/* Saving indicator */}
+                    {pendingSave && (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 rounded-full">
+                            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
+                            <span className="text-xs text-blue-600 font-medium">Saving...</span>
+                        </div>
+                    )}
+                    {currentRoom && (
+                        <div className="text-xs text-gray-400 truncate max-w-[150px]">
+                            {currentRoom.title}
+                        </div>
+                    )}
                 </div>
             </div>
+
+            {/* Pinned Notes Bar */}
+            {pinnedAnswers.length > 0 && (
+                <div className="px-4 py-2 border-b flex items-center gap-2 overflow-x-auto" style={{ backgroundColor: 'rgba(120, 170, 255, 0.1)', borderColor: 'rgba(120, 170, 255, 0.3)' }}>
+                    <Bookmark className="w-4 h-4 flex-shrink-0" style={{ color: '#78AAFF' }} />
+                    <span className="text-xs font-semibold flex-shrink-0" style={{ color: '#5a8edb' }}>Pinned:</span>
+                    <div className="flex gap-2 overflow-x-auto">
+                        {pinnedAnswers.map((pin, index) => (
+                            <button
+                                key={pin.messageId + index}
+                                onClick={() => scrollToMessage(pin.messageId)}
+                                className="px-3 py-1.5 bg-white rounded-full text-xs text-gray-700 transition-colors truncate max-w-[200px] flex-shrink-0 shadow-sm"
+                                style={{ borderWidth: '1px', borderStyle: 'solid', borderColor: 'rgba(120, 170, 255, 0.4)' }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'rgba(120, 170, 255, 0.15)';
+                                    e.currentTarget.style.borderColor = '#78AAFF';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'white';
+                                    e.currentTarget.style.borderColor = 'rgba(120, 170, 255, 0.4)';
+                                }}
+                                title={pin.content}
+                            >
+                                {pin.content.slice(0, 50)}...
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Chat Messages */}
             <div className="flex-1 overflow-y-auto px-4 md:px-12 py-8 space-y-8 scroll-smooth">
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
+                        ref={(el) => { messageRefs.current[msg.id] = el; }}
                         className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"
-                            } animate-slide-up`}
+                            } animate-slide-up transition-all duration-300`}
+
+                        onClick={() => msg.role === "ai" && handlePrintMessage(msg)}
                     >
                         <div
                             className={`flex max-w-full md:max-w-[85%] lg:max-w-[75%] gap-4 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"
@@ -485,9 +1027,19 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                                 {/* AI Actions (Below message) */}
                                 {msg.role === "ai" && (
                                     <div className="flex items-center gap-2 mt-1 animate-fade-in">
-                                        <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-primary hover:bg-blue-50 rounded-full transition-colors border border-transparent hover:border-blue-100">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                saveAsNote(msg);
+                                            }}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-colors border ${pinnedAnswers.some(p => p.messageId === msg.id)
+                                                ? "border-[#78AAFF]"
+                                                : "text-gray-500 hover:text-primary hover:bg-blue-50 border-transparent hover:border-blue-100"
+                                                }`}
+                                            style={pinnedAnswers.some(p => p.messageId === msg.id) ? { color: '#78AAFF', backgroundColor: 'rgba(120, 170, 255, 0.1)' } : {}}
+                                        >
                                             <Bookmark className="w-3.5 h-3.5" />
-                                            Save as note
+                                            {pinnedAnswers.some(p => p.messageId === msg.id) ? "Remove from note" : "Save as note"}
                                         </button>
                                         <div className="flex items-center gap-1 ml-2">
                                             <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">

@@ -1,14 +1,116 @@
 "use client";
 
 import React from "react";
-import { Plus, MessageSquare, History, Settings, LogOut, X } from "lucide-react";
+import { Plus, MessageSquare, Settings, LogOut, X, Trash2 } from "lucide-react";
+import { Room } from "@/hooks/useRooms";
 
 interface SidebarProps {
     isOpen: boolean;
     onClose: () => void;
+    rooms: Room[];
+    isLoadingRooms: boolean;
+    currentRoomId: string | null;
+    onNewChat: () => void;
+    onSelectRoom: (roomId: string) => void;
+    onDeleteRoom: (roomId: string) => void;
 }
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+export function Sidebar({
+    isOpen,
+    onClose,
+    rooms,
+    isLoadingRooms,
+    currentRoomId,
+    onNewChat,
+    onSelectRoom,
+    onDeleteRoom,
+}: SidebarProps) {
+    const formatDate = (dateString: string) => {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now.getTime() - date.getTime();
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMins / 60);
+        const diffDays = Math.floor(diffHours / 24);
+
+        if (diffMins < 1) return "Just now";
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return date.toLocaleDateString();
+    };
+
+    const groupRoomsByDate = (rooms: Room[]) => {
+        const today: Room[] = [];
+        const yesterday: Room[] = [];
+        const thisWeek: Room[] = [];
+        const older: Room[] = [];
+
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+        const weekStart = new Date(todayStart.getTime() - 7 * 86400000);
+
+        rooms.forEach(room => {
+            const roomDate = new Date(room.created_at);
+            if (roomDate >= todayStart) {
+                today.push(room);
+            } else if (roomDate >= yesterdayStart) {
+                yesterday.push(room);
+            } else if (roomDate >= weekStart) {
+                thisWeek.push(room);
+            } else {
+                older.push(room);
+            }
+        });
+
+        return { today, yesterday, thisWeek, older };
+    };
+
+    const groupedRooms = groupRoomsByDate(rooms);
+
+    const RoomSection = ({ title, roomList }: { title: string; roomList: Room[] }) => {
+        if (roomList.length === 0) return null;
+
+        return (
+            <div className="mb-4">
+                <h3 className="px-3 text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">
+                    {title}
+                </h3>
+                {roomList.map((room) => (
+                    <div
+                        key={room.id}
+                        className={`group w-full flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg transition-all duration-200 text-left cursor-pointer
+                            ${currentRoomId === room.id
+                                ? "bg-blue-50 text-blue-700 border-l-2 border-blue-500"
+                                : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                            }`}
+                        onClick={() => onSelectRoom(room.id)}
+                    >
+                        <MessageSquare className={`w-4 h-4 flex-shrink-0 ${currentRoomId === room.id ? "text-blue-500" : "text-gray-400"
+                            }`} />
+                        <div className="flex-1 min-w-0">
+                            <span className="block truncate font-medium">{room.title}</span>
+                            <span className="block text-[10px] text-gray-400 truncate">
+                                {formatDate(room.created_at)}
+                            </span>
+                        </div>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteRoom(room.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 rounded transition-all"
+                            title="Delete chat"
+                        >
+                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
     return (
         <>
             {/* Overlay for mobile */}
@@ -22,11 +124,10 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             {/* Sidebar Container */}
             <aside
                 className={`fixed md:relative top-0 left-0 h-full bg-gray-50 border-r border-gray-100 transition-all duration-300 ease-in-out z-50 flex flex-col
-          ${isOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden"}
-        `}
+          ${isOpen ? "w-72 translate-x-0" : "w-0 -translate-x-full md:w-0 md:translate-x-0 overflow-hidden"
+                    }`}
             >
-                <div className="flex flex-col h-full min-w-[16rem]"> {/* min-w to prevent content squishing during transition */}
-
+                <div className="flex flex-col h-full min-w-[18rem]">
                     {/* Header */}
                     <div className="p-4 border-b border-gray-100 flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -43,26 +144,58 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
                     {/* New Chat Button */}
                     <div className="p-4">
-                        <button className="w-full flex items-center gap-3 px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-primary/50 hover:shadow-md hover:text-primary transition-all duration-200 shadow-sm group">
-                            <div className="p-1 bg-blue-50 rounded-lg group-hover:bg-primary group-hover:text-white transition-colors">
-                                <Plus className="w-5 h-5 text-primary group-hover:text-white" />
+                        <button
+                            onClick={onNewChat}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 shadow-sm group
+                                ${currentRoomId === null
+                                    ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-blue-500/25 shadow-lg"
+                                    : "bg-white border border-gray-200 hover:border-blue-300 hover:shadow-md hover:text-primary"
+                                }`}
+                        >
+                            <div className={`p-1 rounded-lg transition-colors ${currentRoomId === null
+                                ? "bg-white/20"
+                                : "bg-blue-50 group-hover:bg-blue-500"
+                                }`}>
+                                <Plus className={`w-5 h-5 ${currentRoomId === null
+                                    ? "text-white"
+                                    : "text-blue-500 group-hover:text-white"
+                                    }`} />
                             </div>
-                            <span className="font-medium text-gray-700 group-hover:text-primary">New Chat</span>
+                            <span className={`font-medium ${currentRoomId === null ? "text-white" : "text-gray-700"
+                                }`}>
+                                New Chat
+                            </span>
                         </button>
                     </div>
 
                     {/* Chat History */}
-                    <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
-                        <h3 className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">History</h3>
-                        {["Project Alpha Review", "Q3 Financials", "Marketing Brand Assets", "Meeting Notes"].map((item, i) => (
-                            <button
-                                key={i}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-600 rounded-lg hover:bg-gray-100 hover:text-gray-900 transition-colors text-left"
-                            >
-                                <MessageSquare className="w-4 h-4 text-gray-400" />
-                                <span className="truncate">{item}</span>
-                            </button>
-                        ))}
+                    <div className="flex-1 overflow-y-auto px-3 py-2">
+                        {isLoadingRooms ? (
+                            <div className="flex flex-col items-center justify-center py-8">
+                                {/* Modern Futuristic Loader */}
+                                <div className="relative w-10 h-10">
+                                    <div className="absolute inset-0 rounded-full border-2 border-blue-200 animate-ping"></div>
+                                    <div className="absolute inset-0 rounded-full border-2 border-t-blue-500 border-r-transparent border-b-transparent border-l-transparent animate-spin"></div>
+                                    <div className="absolute inset-2 rounded-full bg-gradient-to-tr from-blue-500 to-cyan-400 animate-pulse"></div>
+                                </div>
+                                <p className="text-xs text-gray-400 mt-3 animate-pulse">Loading history...</p>
+                            </div>
+                        ) : rooms.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-8 text-center">
+                                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center mb-3">
+                                    <MessageSquare className="w-7 h-7 text-gray-400" />
+                                </div>
+                                <p className="text-sm text-gray-500 font-medium">No conversations yet</p>
+                                <p className="text-xs text-gray-400 mt-1">Start a new chat to begin</p>
+                            </div>
+                        ) : (
+                            <>
+                                <RoomSection title="Today" roomList={groupedRooms.today} />
+                                <RoomSection title="Yesterday" roomList={groupedRooms.yesterday} />
+                                <RoomSection title="This Week" roomList={groupedRooms.thisWeek} />
+                                <RoomSection title="Older" roomList={groupedRooms.older} />
+                            </>
+                        )}
                     </div>
 
                     {/* Footer Area */}
