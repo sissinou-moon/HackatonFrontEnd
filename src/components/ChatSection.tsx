@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState, useRef, useEffect, JSX } from "react";
-import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2 } from "lucide-react";
+import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { ChatMessage } from "./ChatMessage";
 
 interface Message {
     id: string;
@@ -35,6 +36,8 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
     ]);
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
+    const [currText, setCurrText] = useState("");
+    const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
@@ -43,7 +46,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
 
     useEffect(() => {
         scrollToBottom();
-    }, [messages, isTyping]);
+    }, [messages, isTyping, currText]);
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -80,7 +83,7 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                 throw new Error("Failed to get streaming response");
             }
 
-            // Create placeholder AI message that will be updated as chunks arrive
+            // Create placeholder AI message
             const aiId = (Date.now() + 1).toString();
             const aiResponse: Message = {
                 id: aiId,
@@ -90,9 +93,14 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
             };
             setMessages((prev) => [...prev, aiResponse]);
 
+            // Initialize streaming state
+            setCurrText("");
+            setStreamingMessageId(aiId);
+
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let done = false;
+            let fullText = '';
             let buffer = '';
 
             while (!done) {
@@ -101,60 +109,63 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                     done = true;
                     break;
                 }
-                const chunk = decoder.decode(value, { stream: true });
-                buffer += chunk;
 
-                // SSE messages separated by double newline
-                const parts = buffer.split('\n\n');
-                buffer = parts.pop() || '';
+                // Decode and add to buffer
+                buffer += decoder.decode(value, { stream: true });
 
-                for (const part of parts) {
-                    const lines = part.split('\n').map(l => l.trim());
-                    if (lines.length === 0) continue;
+                // SSE messages are separated by double newlines
+                const messages = buffer.split('\n\n');
+                // Keep the last incomplete message in buffer
+                buffer = messages.pop() || '';
 
-                    // detect event header
-                    let eventType = 'message';
-                    let dataLines: string[] = [];
+                for (const message of messages) {
+                    const lines = message.split('\n');
+                    const eventDataLines: string[] = [];
+
                     for (const line of lines) {
-                        if (line.startsWith('event:')) {
-                            eventType = line.replace('event:', '').trim();
-                        } else if (line.startsWith('data:')) {
-                            dataLines.push(line.replace('data:', '').trim());
+                        if (line.startsWith('data:')) {
+                            // Handle "data: " and "data:"
+                            const data = line.startsWith('data: ') ? line.substring(6) : line.substring(5);
+                            eventDataLines.push(data);
                         }
                     }
 
-                    const data = dataLines.join('\n');
+                    if (eventDataLines.length === 0) continue;
 
-                    if (eventType === 'message' || eventType === 'message' /* fallback */) {
-                        // append partial text
-                        setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
-                    } else if (eventType === 'done') {
-                        // final metadata event (sources) — can be parsed and appended if desired
-                        try {
-                            const json = JSON.parse(data);
-                            // Optionally append source info to last message
-                            if (json?.sources && Array.isArray(json.sources)) {
-                                const sourcesText = '\n\nSources:\n' + json.sources.map((s: any) => `- ${s.fileName} (line ${s.lineNumber})`).join('\n');
-                                setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + sourcesText } : m));
-                            }
-                        } catch (e) {
-                            // ignore parse errors
+                    const data = eventDataLines.join('\n');
+                    if (data === '[DONE]') continue;
+
+                    try {
+                        // Try to parse as JSON (DeepSeek format or final metadata)
+                        const json = JSON.parse(data);
+
+                        // Handle DeepSeek standard format
+                        const content = json.choices?.[0]?.delta?.content;
+                        if (content) {
+                            fullText += content;
+                            setCurrText(fullText);
                         }
-                    } else if (eventType === 'error') {
-                        setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + '\n\n[Error receiving response]' } : m));
+
+                        // Handle final sources metadata if present
+                        if (json.sources) {
+                            console.log("📚 Received sources:", json.sources);
+                        }
+                    } catch (e) {
+                        // Fallback: If not JSON, treat as raw text content
+                        // This handles the case where backend sends "data:  text"
+                        if (data && !data.trim().startsWith('{') && !data.trim().startsWith('[')) {
+                            fullText += data;
+                            setCurrText(fullText);
+                        }
                     }
                 }
             }
 
-            // flush any remaining buffer
-            if (buffer) {
-                const lines = buffer.split('\n').map(l => l.trim());
-                const dataLines = lines.filter(l => l.startsWith('data:')).map(l => l.replace('data:', '').trim());
-                if (dataLines.length) {
-                    const data = dataLines.join('\n');
-                    setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + data } : m));
-                }
-            }
+            // Done streaming - log the final text and save to message
+            console.log('Final streamed text (RAW):', JSON.stringify(fullText));
+            setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText } : m));
+            setStreamingMessageId(null);
+            setCurrText("");
 
         } catch (error) {
             console.error("Chat error:", error);
@@ -330,165 +341,19 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
         return fileUrl;
     }
 
-    // Helper component to render content with interactive citations and tables
-    const MessageContent = ({ content }: { content: string }) => {
-        // 1. Initial cleanup
-        const processedContent = content
-            .replace(/`/g, '')
-            .replace(/^\s*\*\s+/gm, '╰┈➤ ');
 
-        // 2. Rich Text Renderer with memoized regex
-        const renderRichText = React.useMemo(() => {
-            return (text: string) => {
-                const elements: (string | JSX.Element)[] = [];
-                let elementKey = 0;
 
-                // Comprehensive citation regex - covers all formats including standalone quoted files, 'From file:', and 'From [filename]' patterns
-                const citationRegex = /(\[Source:\s*([^,\]]+),\s*lines?\s*\d+\])|(\(Source:\s*([^,\)]+),\s*lignes?\s*\d+\))|(\(Source:\s*([^,\)]+),\s*lines?\s*\d+\))|([Ss]elon le document\s*["""']([^"""']+)["""'],?\s*à la ligne\s*\d+)|(le fichier\s+--?\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*--?\s*à la ligne\s*\d+)|(Source\s*:\s*(?:--\s*)?(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt))\s*(?:,|--)?\s*lignes?\s*\d+)|(\*\s*--\s*(.+?)--[^\n]*?السطر\s*\d+)|(\[(From|File:)\s*([^,\]]+),\s*lines?\s*\d+\])|(\*\(Source:\s*([^,\)]+),\s*lines?\s*[\d\s]+(?:and\s*[\d\s]+)?\)\*)|("([^"]+\.(?:docx?|pdf|xlsx?|pptx?|txt))")|(From file:\s*(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))|(From\s+(.+?\.(?:docx?|pdf|xlsx?|pptx?|txt)))/gi;
-
-                let lastIndex = 0;
-                let match;
-
-                while ((match = citationRegex.exec(text)) !== null) {
-                    if (match.index > lastIndex) {
-                        elements.push(text.slice(lastIndex, match.index));
-                    }
-
-                    // Extract filename from matched groups
-                    let fileName = (
-                        match[2] || match[4] || match[6] || match[8] ||
-                        match[10] || match[12] || match[14] || match[17] || match[19] || match[21] || match[23] || match[25]
-                    )?.trim();
-
-                    // Remove quotes if present
-                    if (fileName) {
-                        fileName = fileName.replace(/^["']|["']$/g, '');
-
-                        elements.push(
-                            <button
-                                key={`cite-${elementKey++}`}
-                                onClick={() => openFile(fileName)}
-                                className="inline mx-1 text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer transition-colors"
-                                title={`Open ${fileName}`}
-                            >
-                                {fileName}
-                            </button>
-                        );
-                    }
-                    lastIndex = citationRegex.lastIndex;
-                }
-
-                if (lastIndex < text.length) {
-                    elements.push(text.slice(lastIndex));
-                }
-
-                // Process bold text
-                const finalElements: (string | JSX.Element)[] = [];
-                const boldRegex = /\*\*([^\*]+)\*\*/g;
-
-                elements.forEach((element, idx) => {
-                    if (typeof element === 'string') {
-                        let lastBoldIndex = 0;
-                        let boldMatch;
-
-                        while ((boldMatch = boldRegex.exec(element)) !== null) {
-                            if (boldMatch.index > lastBoldIndex) {
-                                finalElements.push(element.slice(lastBoldIndex, boldMatch.index));
-                            }
-                            finalElements.push(
-                                <strong key={`bold-${idx}-${elementKey++}`} className="font-bold text-gray-900">
-                                    {boldMatch[1]}
-                                </strong>
-                            );
-                            lastBoldIndex = boldRegex.lastIndex;
-                        }
-                        if (lastBoldIndex < element.length) {
-                            finalElements.push(element.slice(lastBoldIndex));
-                        }
-                    } else {
-                        finalElements.push(element);
-                    }
-                });
-
-                return finalElements;
-            };
-        }, []);
-
-        // 3. Block Parser for Tables
-        const lines = processedContent.split('\n');
-        const blocks: { type: 'text' | 'table', content: string[] }[] = [];
-        let currentBlock: { type: 'text' | 'table', content: string[] } = { type: 'text', content: [] };
-
-        for (const line of lines) {
-            const isTableLine = line.trim().startsWith('|');
-
-            if (isTableLine) {
-                if (currentBlock.type !== 'table') {
-                    if (currentBlock.content.length > 0) blocks.push(currentBlock);
-                    currentBlock = { type: 'table', content: [] };
-                }
-                currentBlock.content.push(line);
-            } else {
-                if (currentBlock.type === 'table') {
-                    blocks.push(currentBlock);
-                    currentBlock = { type: 'text', content: [] };
-                }
-                currentBlock.content.push(line);
-            }
-        }
-        if (currentBlock.content.length > 0) blocks.push(currentBlock);
-
-        // 4. Render blocks
-        return (
-            <div className="space-y-4">
-                {blocks.map((block, index) => {
-                    if (block.type === 'table' && block.content.length >= 2 && block.content[1].includes('-')) {
-                        const parseRow = (row: string) =>
-                            row.split('|')
-                                .map(c => c.trim())
-                                .filter((c, i, arr) => i > 0 && i < arr.length - 1);
-
-                        const headers = parseRow(block.content[0]);
-                        const rows = block.content.slice(2).map(parseRow);
-
-                        return (
-                            <div key={index} className="overflow-x-auto my-4 rounded-lg border border-gray-200 shadow-sm">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            {headers.map((h, i) => (
-                                                <th key={i} className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">
-                                                    {renderRichText(h)}
-                                                </th>
-                                            ))}
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200 text-sm text-gray-700">
-                                        {rows.map((row, rI) => (
-                                            <tr key={rI} className={rI % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                                                {row.map((cell, cI) => (
-                                                    <td key={cI} className="px-4 py-3 whitespace-pre-wrap leading-relaxed">
-                                                        {renderRichText(cell)}
-                                                    </td>
-                                                ))}
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        );
-                    } else {
-                        const text = block.content.join('\n').trim();
-                        if (!text) return null;
-                        return (
-                            <div key={index} className="whitespace-pre-wrap leading-7">
-                                {renderRichText(text)}
-                            </div>
-                        );
-                    }
-                })}
-            </div>
-        );
+    const handleNewChat = () => {
+        setMessages([
+            {
+                id: "1",
+                role: "ai",
+                content: "Salam , je suis votre assiatant Algérie Telecom , comement je peut vous aider aujourd'hui ?",
+                timestamp: new Date(),
+            },
+        ]);
+        setInputValue("");
+        setFilePreview(null);
     };
 
     return (
@@ -572,7 +437,15 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                         </div>
                     </div>
                 </div>
-                <div>{/* Optional Right Header Controls */}</div>
+                <div>
+                    <button
+                        onClick={handleNewChat}
+                        className="flex items-center cursor-pointer gap-2 px-3 py-2 bg-blue-50 text-blue-600 hover:bg-blue-100 hover:text-blue-700 rounded-lg transition-colors text-sm font-medium"
+                    >
+                        <Plus className="w-4 h-4" />
+                        <span className="hidden sm:inline">New Chat</span>
+                    </button>
+                </div>
             </div>
 
             {/* Chat Messages */}
@@ -602,7 +475,11 @@ export function ChatSection({ onToggleSidebar }: ChatSectionProps) {
                                         : "text-gray-800 bg-transparent px-0 py-0"
                                         }`}
                                 >
-                                    <MessageContent content={msg.content} />
+                                    <ChatMessage
+                                        content={streamingMessageId === msg.id ? currText : msg.content}
+                                        role={msg.role}
+                                        onOpenFile={openFile}
+                                    />
                                 </div>
 
                                 {/* AI Actions (Below message) */}
