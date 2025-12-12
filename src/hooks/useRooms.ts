@@ -3,11 +3,18 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
+export interface PinnedAnswer {
+    messageId: string;
+    content: string;
+    pinnedAt: string;
+}
+
 export interface Room {
     id: string;
     title: string;
     aiAnswers: string[];
     userAnswers: string[];
+    pinAnswer: PinnedAnswer[] | null;
     created_at: string;
     updated_at?: string;
 }

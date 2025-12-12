@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect, JSX } from "react";
 import { Send, Menu, Bookmark, User, Copy, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
-import { Room } from "@/hooks/useRooms";
+import { Room, PinnedAnswer } from "@/hooks/useRooms";
 
 interface Message {
     id: string;
@@ -39,8 +39,10 @@ export function ChatSection({
     const [inputValue, setInputValue] = useState("");
     const [isTyping, setIsTyping] = useState(false);
     const [pendingSave, setPendingSave] = useState(false);
+    const [pinnedAnswers, setPinnedAnswers] = useState<PinnedAnswer[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const roomIdRef = useRef<string | null>(null);
+    const messageRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
 
     // Initialize or reset messages based on current room
     useEffect(() => {
@@ -80,6 +82,8 @@ export function ChatSection({
 
             setMessages(loadedMessages);
             roomIdRef.current = currentRoom.id;
+            // Load pinned answers from room
+            setPinnedAnswers(currentRoom.pinAnswer || []);
         } else {
             // New chat - reset to welcome message only
             setMessages([
@@ -91,11 +95,83 @@ export function ChatSection({
                 },
             ]);
             roomIdRef.current = null;
+            setPinnedAnswers([]);
         }
     }, [currentRoom]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    // Scroll to a specific message by ID
+    const scrollToMessage = (messageId: string) => {
+        const messageElement = messageRefs.current[messageId];
+        if (messageElement) {
+            messageElement.scrollIntoView({ behavior: "smooth", block: "start" });
+            // Highlight the message briefly
+            messageElement.classList.add("ring-2", "ring-blue-400", "ring-offset-2");
+            setTimeout(() => {
+                messageElement.classList.remove("ring-2", "ring-blue-400", "ring-offset-2");
+            }, 2000);
+        }
+    };
+
+    // Remove a message from pinned notes
+    const removeFromNote = async (messageId: string) => {
+        if (!roomIdRef.current) return;
+
+        const updatedPins = pinnedAnswers.filter(p => p.messageId !== messageId);
+
+        try {
+            const { error } = await supabase
+                .from("history")
+                .update({ pinAnswer: updatedPins })
+                .eq("id", roomIdRef.current);
+
+            if (error) throw error;
+
+            setPinnedAnswers(updatedPins);
+        } catch (err) {
+            console.error("Failed to remove pin:", err);
+            alert("Could not remove note. Please try again.");
+        }
+    };
+
+    // Save a message as a pinned note
+    const saveAsNote = async (msg: Message) => {
+        if (!roomIdRef.current) {
+            alert("Please save the conversation first before pinning a note.");
+            return;
+        }
+
+        // If already pinned, remove it instead
+        if (pinnedAnswers.some(p => p.messageId === msg.id)) {
+            await removeFromNote(msg.id);
+            return;
+        }
+
+        const newPinnedAnswer: PinnedAnswer = {
+            messageId: msg.id,
+            content: msg.content.slice(0, 200), // Store first 200 chars as preview
+            pinnedAt: new Date().toISOString(),
+        };
+
+        const updatedPins = [...pinnedAnswers, newPinnedAnswer];
+
+        try {
+            // Update Supabase directly
+            const { error } = await supabase
+                .from("history")
+                .update({ pinAnswer: updatedPins })
+                .eq("id", roomIdRef.current);
+
+            if (error) throw error;
+
+            setPinnedAnswers(updatedPins);
+        } catch (err) {
+            console.error("Failed to pin answer:", err);
+            alert("Could not save note. Please try again.");
+        }
     };
 
     useEffect(() => {
@@ -815,13 +891,43 @@ export function ChatSection({
                 </div>
             </div>
 
+            {/* Pinned Notes Bar */}
+            {pinnedAnswers.length > 0 && (
+                <div className="px-4 py-2 border-b flex items-center gap-2 overflow-x-auto" style={{ backgroundColor: 'rgba(120, 170, 255, 0.1)', borderColor: 'rgba(120, 170, 255, 0.3)' }}>
+                    <Bookmark className="w-4 h-4 flex-shrink-0" style={{ color: '#78AAFF' }} />
+                    <span className="text-xs font-semibold flex-shrink-0" style={{ color: '#5a8edb' }}>Pinned:</span>
+                    <div className="flex gap-2 overflow-x-auto">
+                        {pinnedAnswers.map((pin, index) => (
+                            <button
+                                key={pin.messageId + index}
+                                onClick={() => scrollToMessage(pin.messageId)}
+                                className="px-3 py-1.5 bg-white rounded-full text-xs text-gray-700 transition-colors truncate max-w-[200px] flex-shrink-0 shadow-sm"
+                                style={{ borderWidth: '1px', borderStyle: 'solid', borderColor: 'rgba(120, 170, 255, 0.4)' }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'rgba(120, 170, 255, 0.15)';
+                                    e.currentTarget.style.borderColor = '#78AAFF';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'white';
+                                    e.currentTarget.style.borderColor = 'rgba(120, 170, 255, 0.4)';
+                                }}
+                                title={pin.content}
+                            >
+                                {pin.content.slice(0, 50)}...
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Chat Messages */}
             <div className="flex-1 overflow-y-auto px-4 md:px-12 py-8 space-y-8 scroll-smooth">
                 {messages.map((msg) => (
                     <div
                         key={msg.id}
+                        ref={(el) => { messageRefs.current[msg.id] = el; }}
                         className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"
-                            } animate-slide-up`}
+                            } animate-slide-up transition-all duration-300`}
 
                         onClick={() => msg.role === "ai" && handlePrintMessage(msg)}
                     >
@@ -850,9 +956,19 @@ export function ChatSection({
                                 {/* AI Actions (Below message) */}
                                 {msg.role === "ai" && (
                                     <div className="flex items-center gap-2 mt-1 animate-fade-in">
-                                        <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-primary hover:bg-blue-50 rounded-full transition-colors border border-transparent hover:border-blue-100">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                saveAsNote(msg);
+                                            }}
+                                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-colors border ${pinnedAnswers.some(p => p.messageId === msg.id)
+                                                ? "border-[#78AAFF]"
+                                                : "text-gray-500 hover:text-primary hover:bg-blue-50 border-transparent hover:border-blue-100"
+                                                }`}
+                                            style={pinnedAnswers.some(p => p.messageId === msg.id) ? { color: '#78AAFF', backgroundColor: 'rgba(120, 170, 255, 0.1)' } : {}}
+                                        >
                                             <Bookmark className="w-3.5 h-3.5" />
-                                            Save as note
+                                            {pinnedAnswers.some(p => p.messageId === msg.id) ? "Remove from note" : "Save as note"}
                                         </button>
                                         <div className="flex items-center gap-1 ml-2">
                                             <button className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
