@@ -35,8 +35,6 @@
     transform: translateY(0);
     opacity: 1;
   }
-<<<<<<< HEAD
-=======
 }
 
 @keyframes pulseGlow {
@@ -69,7 +67,6 @@
   100% {
     background-position: 200% 0;
   }
->>>>>>> main
 }
 
 body {
@@ -155,5 +152,5 @@ h3,
 h4,
 h5,
 h6 {
-  color: #6e6e6e;
+  color: #848484;
 }
