@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, JSX } from "react";
-import { Send, Menu, Bookmark, User, Copy, Check, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus } from "lucide-react";
+import { Send, Menu, Bookmark, User, Copy, Check, ThumbsUp, ThumbsDown, FileText, ArrowLeft, X, Loader2, Plus, ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { Room, PinnedAnswer, AIAnswer, AIAnswerSource } from "@/hooks/useRooms";
 import { ChatMessage } from "./ChatMessage";
@@ -53,6 +53,70 @@ export function ChatSection({
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const roomIdRef = useRef<string | null>(null);
     const messageRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+
+    // Loading animation state
+    const [loadingMetricsVisible, setLoadingMetricsVisible] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState("");
+    const loadIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Random loading messages
+
+    const [loadingDuration, setLoadingDuration] = useState("0.0s");
+
+    const generateRandomMessage = () => {
+        const actions = ["Checking", "Verifying", "Optimizing", "Analyzing", "Ping Testing", "Scanning", "Connecting to", "Fetching"];
+        const subjects = ["IDOM", "ADSL Line", "FIBRE Signal", "Algerie Telecom", "Gaming Servers", "Network Latency", "Bandwidth", "Data Packets"];
+        const contexts = ["for stability", "coverage", "availability", "max speed", "packet loss", "best stability", "local exchange"];
+
+        const action = actions[Math.floor(Math.random() * actions.length)];
+        const subject = subjects[Math.floor(Math.random() * subjects.length)];
+        const context = contexts[Math.floor(Math.random() * contexts.length)];
+
+        return `${action} ${subject} ${context}...`;
+    };
+
+    useEffect(() => {
+        if (isTyping && !streamingMessageId) {
+            // Reset state
+            setLoadingMetricsVisible(false);
+            setLoadingMessage(generateRandomMessage());
+            setLoadingDuration("0.0s");
+
+            const startTime = Date.now();
+            let lastMessageUpdate = 0;
+
+            // Show metrics box after 2 seconds
+            const visibleTimer = setTimeout(() => {
+                setLoadingMetricsVisible(true);
+            }, 2000);
+
+            // Update timer every 100ms and message every 400ms
+            loadIntervalRef.current = setInterval(() => {
+                const now = Date.now();
+                const elapsedTotal = now - startTime;
+
+                // Calculate time starting AFTER the 2s delay
+                const displayedTime = Math.max(0, elapsedTotal - 2000);
+
+                // Update timer text
+                setLoadingDuration((displayedTime / 1000).toFixed(1) + "s");
+
+                // Update message every 400ms
+                if (now - lastMessageUpdate > 400) {
+                    setLoadingMessage(generateRandomMessage());
+                    lastMessageUpdate = now;
+                }
+            }, 100);
+
+            return () => {
+                clearTimeout(visibleTimer);
+                if (loadIntervalRef.current) clearInterval(loadIntervalRef.current);
+            };
+        } else {
+            setLoadingMetricsVisible(false);
+            if (loadIntervalRef.current) clearInterval(loadIntervalRef.current);
+        }
+    }, [isTyping, streamingMessageId]);
 
     // Initialize or reset messages based on current room
     useEffect(() => {
@@ -449,9 +513,7 @@ export function ChatSection({
     };
 
     const getViewerUrl = (fileUrl: string, fileType: 'pdf' | 'docx' | 'other') => {
-        if (fileType === 'pdf') {
-            return fileUrl;
-        } else if (fileType === 'docx') {
+        if (fileType === 'pdf' || fileType === 'docx') {
             return `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
         }
         return fileUrl;
@@ -667,13 +729,24 @@ export function ChatSection({
                     </div>
                 ))}
 
-                {isTyping && (
-                    <div className="flex justify-start w-full animate-fade-in pl-0 md:pl-0">
-                        <div className="flex gap-1 items-center h-8 px-2">
-                            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                            <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
+                {isTyping && !streamingMessageId && (
+                    <div className="flex flex-col gap-1.5 justify-start w-full animate-fade-in pl-0 md:pl-0 mt-2 mb-4">
+                        {/* Thinking Indicator */}
+                        <div className="flex items-center gap-1.5 px-2">
+                            <span className="text-sm font-bold text-gray-700/50 animate-pulse flex items-center gap-1">
+                                Thinking... <ChevronDown className="w-3.5 h-3.5" />
+                            </span>
                         </div>
+
+                        {/* Delayed Status Box */}
+                        {loadingMetricsVisible && (
+                            <div className="flex items-center gap-2 px-3 py-1.5 ml-2 bg-gray-100/50 rounded-md border border-gray-200/50 w-fit max-w-[350px] animate-pulse">
+                                <span className="text-[10px] font-semibold text-gray-700/50 truncate flex items-center">
+                                    <span className="mr-2 text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-md font-mono">{loadingDuration}</span>
+                                    {loadingMessage}
+                                </span>
+                            </div>
+                        )}
                     </div>
                 )}
                 <div ref={messagesEndRef} />
