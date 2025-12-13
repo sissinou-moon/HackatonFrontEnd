@@ -38,7 +38,7 @@ export function Sidebar({
             const response = await fetch('/api/search', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query })
+                body: JSON.stringify({ query, topK: 10 })
             });
             const data = await response.json();
             if (data.success) {
