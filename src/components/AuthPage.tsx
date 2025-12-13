@@ -15,7 +15,23 @@ export function AuthPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
+    const [role, setRole] = useState('agent');
     const [confirmPassword, setConfirmPassword] = useState('');
+
+    // Password Validation Helper
+    const getPasswordToStrength = (pass: string) => {
+        let score = 0;
+        if (!pass) return 0;
+
+        if (pass.length >= 6) score++;
+        if (/[0-9]/.test(pass)) score++;
+        if (/[a-z]/.test(pass)) score++;
+        if (/[A-Z]/.test(pass)) score++;
+
+        return score;
+    };
+
+    const passwordStrength = getPasswordToStrength(password);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -30,13 +46,35 @@ export function AuthPage() {
         }
 
         if (!isLogin) {
+            if (!name) {
+                setError('Name is required');
+                setLoading(false);
+                return;
+            }
             if (password !== confirmPassword) {
                 setError('Passwords do not match');
                 setLoading(false);
                 return;
             }
+
+            // Strict Password Validation
             if (password.length < 6) {
                 setError('Password must be at least 6 characters');
+                setLoading(false);
+                return;
+            }
+            if (!/[0-9]/.test(password)) {
+                setError('Password must contain at least one number');
+                setLoading(false);
+                return;
+            }
+            if (!/[a-z]/.test(password)) {
+                setError('Password must contain at least one lowercase letter');
+                setLoading(false);
+                return;
+            }
+            if (!/[A-Z]/.test(password)) {
+                setError('Password must contain at least one capital letter');
                 setLoading(false);
                 return;
             }
@@ -47,7 +85,7 @@ export function AuthPage() {
             if (isLogin) {
                 result = await login(email, password);
             } else {
-                result = await register(email, password, { name });
+                result = await register(email, password, name, role);
             }
 
             if (!result.success) {
@@ -103,22 +141,54 @@ export function AuthPage() {
                             <form onSubmit={handleSubmit} className="space-y-5">
                                 {/* Name field (Register only) */}
                                 {!isLogin && (
-                                    <div className="space-y-2">
-                                        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-                                            Full Name
-                                        </label>
-                                        <div className="relative">
-                                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                                <UserIcon className="h-5 w-5 text-gray-400" />
+                                    <div className="space-y-4">
+                                        {/* Name field */}
+                                        <div className="space-y-2">
+                                            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+                                                Full Name
+                                            </label>
+                                            <div className="relative">
+                                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                                    <UserIcon className="h-5 w-5 text-gray-400" />
+                                                </div>
+                                                <input
+                                                    id="name"
+                                                    type="text"
+                                                    value={name}
+                                                    onChange={(e) => setName(e.target.value)}
+                                                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 placeholder-gray-400"
+                                                    placeholder="John Doe"
+                                                    required
+                                                />
                                             </div>
-                                            <input
-                                                id="name"
-                                                type="text"
-                                                value={name}
-                                                onChange={(e) => setName(e.target.value)}
-                                                className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 placeholder-gray-400"
-                                                placeholder="John Doe"
-                                            />
+                                        </div>
+
+                                        {/* Role Selection */}
+                                        <div className="space-y-2">
+                                            <label htmlFor="role" className="block text-sm font-medium text-gray-700">
+                                                Role
+                                            </label>
+                                            <div className="relative">
+                                                <select
+                                                    id="role"
+                                                    value={role}
+                                                    onChange={(e) => setRole(e.target.value)}
+                                                    className="block w-full px-3 py-2.5 bg-white border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 appearance-none"
+                                                >
+                                                    <option value="agent">Agent</option>
+                                                    <option value="manager">Manager</option>
+                                                </select>
+                                                <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                                                    <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                {role === 'manager'
+                                                    ? 'Full access to upload, delete, and manage files.'
+                                                    : 'Can view and chat with files only.'}
+                                            </p>
                                         </div>
                                     </div>
                                 )}
@@ -175,6 +245,28 @@ export function AuthPage() {
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* Password Strength Checker (Register only) */}
+                                {!isLogin && password && (
+                                    <div className="mt-2 space-y-1">
+                                        <div className="flex gap-1 h-1.5 w-full">
+                                            {/* Bar segments */}
+                                            <div className={`h-full rounded-full flex-1 transition-colors duration-300 ${passwordStrength >= 1 ? 'bg-red-500' : 'bg-gray-200'
+                                                }`} />
+                                            <div className={`h-full rounded-full flex-1 transition-colors duration-300 ${passwordStrength >= 2 ? (passwordStrength >= 3 ? 'bg-orange-500' : 'bg-orange-500') : 'bg-gray-200'
+                                                }`} />
+                                            <div className={`h-full rounded-full flex-1 transition-colors duration-300 ${passwordStrength >= 4 ? 'bg-green-500' : 'bg-gray-200'
+                                                }`} />
+                                        </div>
+                                        <p className={`text-xs text-right font-medium transition-colors duration-300 ${passwordStrength <= 2 ? 'text-red-500' :
+                                            passwordStrength === 3 ? 'text-orange-500' : 'text-green-600'
+                                            }`}>
+                                            {passwordStrength <= 2 ? 'Weak' :
+                                                passwordStrength === 3 ? 'Normal' : 'Strong'}
+                                        </p>
+                                    </div>
+                                )}
+
 
                                 {/* Confirm Password field (Register only) */}
                                 {!isLogin && (
@@ -244,7 +336,7 @@ export function AuthPage() {
                 <p className="text-center text-xs text-gray-500 mt-6">
                     © 2025 Algérie Télécom. All rights reserved.
                 </p>
-            </div>
-        </div>
+            </div >
+        </div >
     );
 }

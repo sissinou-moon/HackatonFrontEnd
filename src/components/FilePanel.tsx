@@ -19,6 +19,7 @@ import {
     CloudUpload
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FileItem {
     id: string;
@@ -41,6 +42,17 @@ export function FilePanel() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const folderInputRef = useRef<HTMLInputElement>(null);
     const [files, setFiles] = useState<FileItem[]>([]);
+    const { user } = useAuth();
+
+    const isManager = user?.user_metadata?.role === 'manager';
+
+    const checkPermission = (action: string) => {
+        if (!isManager) {
+            showToast(`Permission denied: Only managers can ${action}`, 'error');
+            return false;
+        }
+        return true;
+    };
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -81,6 +93,7 @@ export function FilePanel() {
 
     // Upload file to Pinecone
     const uploadToPinecone = async (file: FileItem) => {
+        if (!checkPermission("upload to AI")) return;
         if (file.isFolder) return;
 
         setUploadingToPinecone(file.id);
@@ -374,6 +387,7 @@ export function FilePanel() {
 
     // Create folder (IDE-style)
     const createFolder = async () => {
+        if (!checkPermission("create folders")) return;
         // Sanitize folder name: replace spaces with underscores to match backend behavior
         const rawFolderName = newFolderName.trim();
         if (!rawFolderName) {
@@ -423,6 +437,7 @@ export function FilePanel() {
 
     // Delete file or folder
     const deleteItem = async (item: FileItem) => {
+        if (!checkPermission("delete items")) return;
         try {
             if (item.isFolder) {
                 // For folders, we need to delete all contents first
@@ -451,6 +466,7 @@ export function FilePanel() {
 
     // Handle file upload
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!checkPermission("upload files")) return;
         const files = e.target.files;
         if (!files || files.length === 0) return;
 
@@ -497,6 +513,7 @@ export function FilePanel() {
     };
 
     const triggerFileInput = () => {
+        if (!checkPermission("upload files")) return;
         fileInputRef.current?.click();
     };
 
@@ -631,7 +648,11 @@ export function FilePanel() {
 
                         {/* Create Folder Button */}
                         <button
-                            onClick={() => setIsCreatingFolder(true)}
+                            onClick={() => {
+                                if (checkPermission("create folders")) {
+                                    setIsCreatingFolder(true);
+                                }
+                            }}
                             disabled={isCreatingFolder}
                             className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-gray-700 rounded-xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer group disabled:opacity-70"
                         >

@@ -164,9 +164,7 @@ export function ChatMessage({ content, role, sources }: ChatMessageProps) {
     };
 
     const getViewerUrl = (fileUrl: string, fileType: 'pdf' | 'docx' | 'other') => {
-        if (fileType === 'pdf') {
-            return fileUrl;
-        } else if (fileType === 'docx') {
+        if (fileType === 'pdf' || fileType === 'docx') {
             return `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
         }
         return fileUrl;

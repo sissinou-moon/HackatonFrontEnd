@@ -22,7 +22,7 @@ interface AuthContextType {
     session: Session | null;
     loading: boolean;
     login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-    register: (email: string, password: string, metadata?: any) => Promise<{ success: boolean; error?: string }>;
+    register: (email: string, password: string, name: string, role: string, metadata?: any) => Promise<{ success: boolean; error?: string }>;
     logout: () => Promise<void>;
     refreshSession: () => Promise<void>;
 }
@@ -110,14 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
-    const register = async (email: string, password: string, metadata?: any) => {
+    const register = async (email: string, password: string, name: string, role: string, metadata?: any) => {
         try {
             const response = await fetch(`${API_BASE}/auth/register`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ email, password, metadata }),
+                body: JSON.stringify({ email, password, name, role, metadata }),
             });
 
             const data = await response.json();
