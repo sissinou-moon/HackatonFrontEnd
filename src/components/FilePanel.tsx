@@ -38,7 +38,7 @@ interface FilePreview {
     fileType: 'pdf' | 'docx' | 'other';
 }
 
-export function FilePanel() {
+export function FilePanel({ onOpenFile }: { onOpenFile: (path: string, fileName: string) => void }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const folderInputRef = useRef<HTMLInputElement>(null);
     const [files, setFiles] = useState<FileItem[]>([]);
@@ -58,9 +58,8 @@ export function FilePanel() {
     const [searchTerm, setSearchTerm] = useState('');
     const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
-    // File preview modal state
-    const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
-    const [isLoadingFile, setIsLoadingFile] = useState(false);
+    // File preview modal state - MOVED TO PARENT
+    // Listing files state remains here
 
     // Upload to Pinecone state
     const [uploadingToPinecone, setUploadingToPinecone] = useState<string | null>(null);
@@ -143,56 +142,6 @@ export function FilePanel() {
         } finally {
             setUploadingToPinecone(null);
         }
-    };
-
-    // Open file in modal
-    const openFile = async (file: FileItem) => {
-        if (file.isFolder) return;
-
-        setIsLoadingFile(true);
-        console.log(`🔍 Opening file: ${file.path}`);
-
-        try {
-            // Get public URL directly from path
-            const { data: urlData } = supabase.storage
-                .from('documents')
-                .getPublicUrl(file.path);
-
-            if (!urlData?.publicUrl) {
-                alert("Could not generate file URL");
-                setIsLoadingFile(false);
-                return;
-            }
-
-            // Determine file type
-            const extension = file.name.toLowerCase().split('.').pop();
-            let fileType: 'pdf' | 'docx' | 'other' = 'other';
-            if (extension === 'pdf') fileType = 'pdf';
-            else if (extension === 'docx' || extension === 'doc') fileType = 'docx';
-
-            setFilePreview({
-                fileName: file.displayName,
-                fileUrl: urlData.publicUrl,
-                fileType
-            });
-
-        } catch (e) {
-            console.error("❌ Error opening file:", e);
-            alert(`Error opening file: ${e instanceof Error ? e.message : 'Unknown error'}`);
-        } finally {
-            setIsLoadingFile(false);
-        }
-    };
-
-    const closeFilePreview = () => {
-        setFilePreview(null);
-    };
-
-    const getViewerUrl = (fileUrl: string, fileType: 'pdf' | 'docx' | 'other') => {
-        if (fileType === 'pdf' || fileType === 'docx') {
-            return `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
-        }
-        return fileUrl;
     };
 
     // Helper function to clean file names
@@ -540,49 +489,6 @@ export function FilePanel() {
 
     return (
         <>
-            {/* File Preview Modal */}
-            {filePreview && (
-                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
-                    <div className="relative w-full h-full max-w-6xl max-h-[90vh] m-4 bg-white rounded-lg shadow-2xl overflow-hidden flex flex-col">
-                        {/* Modal Header */}
-                        <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white">
-                            <div className="flex items-center gap-2">
-                                <FileText className="w-5 h-5" />
-                                <h3 className="text-sm font-semibold truncate max-w-[300px]">
-                                    {filePreview.fileName}
-                                </h3>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <a
-                                    href={filePreview.fileUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded text-xs font-medium transition-colors"
-                                >
-                                    Open in New Tab
-                                </a>
-                                <button
-                                    onClick={closeFilePreview}
-                                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* File Content */}
-                        <div className="flex-1 bg-gray-100 overflow-hidden">
-                            <iframe
-                                src={getViewerUrl(filePreview.fileUrl, filePreview.fileType)}
-                                className="w-full h-full border-0"
-                                title={`Preview: ${filePreview.fileName}`}
-                                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* Toast Notification */}
             {toast.visible && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[10000] animate-slide-up-fade">
@@ -594,16 +500,6 @@ export function FilePanel() {
                         {toast.type === 'success' && <Check className="w-5 h-5 text-green-600" />}
                         {toast.type === 'error' && <X className="w-5 h-5 text-red-600" />}
                         <span className="font-medium text-sm whitespace-nowrap">{toast.message}</span>
-                    </div>
-                </div>
-            )}
-
-            {/* Loading Overlay */}
-            {isLoadingFile && (
-                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl p-6 shadow-2xl flex flex-col items-center gap-3">
-                        <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-                        <p className="text-gray-600 font-medium">Opening file...</p>
                     </div>
                 </div>
             )}
@@ -778,7 +674,7 @@ export function FilePanel() {
                                     : 'hover:border-blue-100 cursor-pointer'
                                     }`}
                                 style={{ animationDelay: `${index * 0.03}s` }}
-                                onClick={() => item.isFolder ? navigateToFolder(item.path) : openFile(item)}
+                                onClick={() => item.isFolder ? navigateToFolder(item.path) : onOpenFile(item.path, item.displayName)}
                             >
                                 <div className="flex items-start justify-between">
                                     <div className="flex items-start gap-3 overflow-hidden">

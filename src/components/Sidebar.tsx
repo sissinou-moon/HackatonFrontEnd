@@ -14,6 +14,7 @@ interface SidebarProps {
     onNewChat: () => void;
     onSelectRoom: (roomId: string) => void;
     onDeleteRoom: (roomId: string) => void;
+    onOpenFile: (path: string, fileName: string) => void;
 }
 
 export function Sidebar({
@@ -25,6 +26,7 @@ export function Sidebar({
     onNewChat,
     onSelectRoom,
     onDeleteRoom,
+    onOpenFile,
 }: SidebarProps) {
     const { logout, user } = useAuth();
     const [isSearching, setIsSearching] = useState(false);
@@ -59,10 +61,15 @@ export function Sidebar({
         // Actual implementation logic usually involves splitting and wrapping in span with bg-yellow-200
     };
 
-    const handleLogout = async () => {
-        if (confirm("Are you sure you want to log out?")) {
-            await logout();
-        }
+    const [showLogoutModal, setShowLogoutModal] = useState(false);
+
+    const handleLogout = () => {
+        setShowLogoutModal(true);
+    };
+
+    const confirmLogout = async () => {
+        await logout();
+        setShowLogoutModal(false);
     };
 
     const formatDate = (dateString: string) => {
@@ -153,6 +160,39 @@ export function Sidebar({
 
     return (
         <>
+            {/* Logout Confirmation Modal */}
+            {showLogoutModal && (
+                <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fade-in px-4">
+                    <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100 border border-gray-100">
+                        <div className="flex flex-col items-center text-center gap-4">
+                            <div className="p-3 bg-red-50 rounded-full">
+                                <LogOut className="w-8 h-8 text-red-500" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-900">Sign Out</h3>
+                                <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+                                    Are you sure you want to sign out? You'll need to log in again to access your account.
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-3 w-full mt-4">
+                                <button
+                                    onClick={() => setShowLogoutModal(false)}
+                                    className="flex-1 px-4 py-2.5 bg-gray-50 hover:bg-gray-100 text-gray-700 font-medium rounded-xl transition-colors border border-gray-200"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmLogout}
+                                    className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl shadow-lg shadow-red-500/20 transition-all hover:-translate-y-0.5"
+                                >
+                                    Sign Out
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Overlay for mobile */}
             {isOpen && (
                 <div
@@ -260,7 +300,11 @@ export function Sidebar({
                                     </div>
                                 ) : (
                                     searchResults.map((result, idx) => (
-                                        <div key={idx} className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow">
+                                        <div
+                                            key={idx}
+                                            onClick={() => onOpenFile(result.displayPath, result.fileName)}
+                                            className="bg-white border border-gray-100 rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow cursor-pointer hover:border-blue-200"
+                                        >
                                             <div className="flex items-start gap-2 mb-2">
                                                 <div className="p-1.5 bg-blue-50 rounded text-blue-600">
                                                     <FileText className="w-4 h-4" />

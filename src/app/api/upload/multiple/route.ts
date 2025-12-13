@@ -1,68 +1,39 @@
-
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
 
 export async function POST(req: NextRequest) {
     try {
-        const formData = await req.formData();
-        const files = formData.getAll('files') as File[];
-        const folder = formData.get('folder') as string || '';
+        console.log("Proxying upload request to external API...");
 
-        if (!files || files.length === 0) {
-            return NextResponse.json({ success: false, message: 'No files uploaded' }, { status: 400 });
+        // Parse the incoming form data
+        const incomingFormData = await req.formData();
+
+        // Prepare outgoing form data
+        // We iterate and append to ensuring we pass all fields (files, folder, etc.)
+        const outgoingFormData = new FormData();
+
+        for (const [key, value] of incomingFormData.entries()) {
+            outgoingFormData.append(key, value);
         }
 
-        const results = [];
-
-        for (const file of files) {
-            try {
-                const timestamp = Date.now();
-                // Sanitize filename
-                const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-
-                // Clean up folder path
-                const cleanFolder = folder.replace(/^\/+|\/+$/g, '');
-                const storagePath = cleanFolder
-                    ? `${cleanFolder}/${timestamp}-${safeName}`
-                    : `${timestamp}-${safeName}`;
-
-                // Upload to Supabase Storage
-                const { data, error } = await supabase.storage
-                    .from('documents')
-                    .upload(storagePath, file, {
-                        cacheControl: '3600',
-                        upsert: false
-                    });
-
-                if (error) throw error;
-
-                results.push({
-                    success: true,
-                    fileName: file.name,
-                    folder: folder,
-                    storagePath: storagePath,
-                    chunksCount: 0, // Placeholder as embedding logic is separate/not available
-                    message: "Successfully uploaded"
-                });
-
-            } catch (err: any) {
-                console.error(`Error uploading ${file.name}:`, err);
-                results.push({
-                    success: false,
-                    fileName: file.name,
-                    message: err.message || "Upload failed"
-                });
-            }
-        }
-
-        return NextResponse.json({
-            success: true,
-            message: `Processed ${files.length} files`,
-            results: results
+        // Call the external API server
+        const response = await fetch("http://localhost:3000/api/multiple", {
+            method: "POST",
+            // Note: When sending FormData with fetch, do NOT set Content-Type header manually.
+            // The browser/environment will set it with the correct boundary.
+            body: outgoingFormData,
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("External API upload error:", response.status, errorText);
+            throw new Error(`External API responded with ${response.status}: ${errorText}`);
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+
     } catch (error: any) {
-        console.error('Upload handler error:', error);
+        console.error('Upload proxy error:', error);
         return NextResponse.json(
             { success: false, message: 'Internal server error', error: error.message },
             { status: 500 }
